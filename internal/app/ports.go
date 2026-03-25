@@ -6,6 +6,10 @@ type GitPort interface {
 	EnsureRepo() (string, error)
 	ListWorktrees(repoRoot string) ([]domain.GitWorktreeEntry, error)
 	CreateWorktree(repoRoot, path, branch, baseBranch string) error
+	CreateWorktreeNew(repoRoot, path, branch, startPoint string) error
+	CreateWorktreeExisting(repoRoot, path, branch string) error
+	BranchExists(repoRoot, branch string) (bool, error)
+	SyncBaseBranch(repoRoot, baseBranch string) (string, error)
 	RemoveWorktree(repoRoot, path string, force bool) error
 	IsDirty(path string) (bool, error)
 	DiscoverFlutterRepos(scope string) ([]domain.DiscoveredFlutterRepo, error)
@@ -32,4 +36,10 @@ type PubPort interface {
 	Clean(repoPath string, tool domain.PubTool) error
 	RemoveLock(repoPath string) error
 	Get(repoPath string, tool domain.PubTool) error
+}
+
+type UpdatePort interface {
+	CheckBrewInstalled() error
+	CheckOutdated(packageName string) (bool, string, string, error)
+	Upgrade(packageName string) (string, error)
 }

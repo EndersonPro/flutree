@@ -18,7 +18,10 @@ func ExitOnError(err error) {
 		if appErr.Hint != "" {
 			fmt.Fprintf(os.Stderr, "Hint: %s\n", appErr.Hint)
 		}
-		os.Exit(appErr.Code)
+		if appErr.Category == domain.CategoryInput {
+			os.Exit(2)
+		}
+		os.Exit(1)
 	}
 	fmt.Fprintln(os.Stderr, "[unexpected] Command failed.")
 	os.Exit(1)

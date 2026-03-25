@@ -21,6 +21,7 @@
   - [pubget](#pubget)
 - [🛠️ Quickstart](#%EF%B8%8F-quickstart)
 - [⚙️ Advanced Usage](#%EF%B8%8F-advanced-usage)
+- [🔄 Version and update](#-version-and-update)
 - [🧪 Testing](#-testing)
 - [🤖 Non-interactive behavior](#-non-interactive-behavior)
 - [🗂️ Registry](#%EF%B8%8F-registry)
@@ -51,6 +52,8 @@ Upgrade:
 ```bash
 brew update
 brew upgrade flutree
+# or via flutree helper command
+flutree update
 ```
 
 ### Build from source
@@ -72,12 +75,16 @@ Run from inside a Git repository:
 ```bash
 flutree create feature-login --branch feature/login --root-repo repo --scope . --yes --non-interactive
 flutree list
+flutree --version
+flutree update --check
 flutree pubget feature-login
 flutree pubget feature-login --force
 flutree complete feature-login --yes --force
 ```
 
 If you omit `--branch`, branch defaults to `feature/<normalized-name>`.
+
+Package worktrees reuse the exact same branch token as root (`--branch` value, or the default when omitted).
 
 Use `--yes` on `create` with `--non-interactive` to approve the dry plan in automation and CI scripts.
 
@@ -94,6 +101,8 @@ Default destination root is `~/Documents/worktrees`, generating:
 - second, it asks for one final confirmation token gate before `git worktree add` and file/registry writes.
 
 For automation/non-interactive runs, `create --non-interactive` requires explicit `--yes` and `--root-repo`.
+If the target branch already exists, non-interactive runs also require `--reuse-existing-branch`.
+When creating a new branch, `create` syncs the configured base branch first and fails fast if sync cannot be completed.
 For deterministic package targeting, pass `--package` and optional `--package-base` overrides.
 
 Example with explicit package selectors and workspace output:
@@ -139,6 +148,7 @@ flutree create <name> [options]
 | `--no-workspace` | boolean | `false` | Disable VSCode workspace generation |
 | `--yes` | boolean | `false` | Acknowledge dry plan automatically in non-interactive mode |
 | `--non-interactive` | boolean | `false` | Disable prompts |
+| `--reuse-existing-branch` | boolean | `false` | Reuse existing local branch in non-interactive mode |
 | `--package` | string |  | Package repository selector (repeatable) |
 | `--package-base` | string |  | Override package base branch as `<selector>=<branch>` (repeatable) |
 
@@ -158,6 +168,7 @@ flutree list [--all]
 ### complete
 
 Remove-only completion flow (removes worktree and keeps local branch).
+If a recorded path is already missing, completion performs stale registry cleanup and still succeeds.
 
 Usage:
 ```
@@ -183,6 +194,32 @@ flutree pubget <name> [--force]
 |------|------|---------|-------------|
 | `--force` | boolean | `false` | Clean cache and remove `pubspec.lock` before `pub get` |
 
+## 🔄 Version and update
+
+Stable version output:
+
+```bash
+flutree --version
+flutree version
+```
+
+Brew-only update flow:
+
+```bash
+flutree update --check
+flutree update
+flutree update --apply
+```
+
+`flutree update` is equivalent to `flutree update --apply`.
+
+Current update automation scope is Homebrew only (non-brew channels are out of scope in this release).
+
+Exit code contract for version/update paths:
+- `0`: success
+- `1`: brew/precondition/process failure on `update`
+- `2`: input/cancel validation failures
+
 ## 🧪 Testing
 
 ```bash
@@ -204,8 +241,15 @@ go build -o ./flutree ./cmd/flutree
 - `create --yes` is only auto-approval in `--non-interactive` mode.
 - `create --non-interactive` without `--yes` fails fast by design.
 - `create --non-interactive` also requires explicit `--root-repo` selector.
+- `create --non-interactive` requires `--reuse-existing-branch` when the target branch already exists.
 - `complete` requires confirmation unless `--yes` is passed.
 - `complete --non-interactive` without `--yes` fails fast by design.
+
+## Exit Codes
+
+- `0`: success
+- `1`: operational/precondition/process/git/update failure
+- `2`: input or user-cancelled flow
 
 ## 🗂️ Registry
 

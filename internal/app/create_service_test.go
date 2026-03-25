@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,11 +12,15 @@ import (
 )
 
 type fakeCreateGit struct {
-	repos    []domain.DiscoveredFlutterRepo
-	created  []string
-	removed  []string
-	dirty    bool
-	worktree map[string][]domain.GitWorktreeEntry
+	repos            []domain.DiscoveredFlutterRepo
+	created          []string
+	createdExisting  []string
+	removed          []string
+	dirty            bool
+	worktree         map[string][]domain.GitWorktreeEntry
+	branchExistsByID map[string]bool
+	syncCalls        []string
+	syncErr          error
 }
 
 func (f *fakeCreateGit) EnsureRepo() (string, error) { return "", nil }
@@ -27,6 +32,29 @@ func (f *fakeCreateGit) CreateWorktree(repoRoot, path, branch, baseBranch string
 	f.created = append(f.created, strings.Join([]string{repoRoot, path, branch, baseBranch}, "::"))
 	return nil
 }
+func (f *fakeCreateGit) CreateWorktreeNew(repoRoot, path, branch, startPoint string) error {
+	_ = os.MkdirAll(path, 0o755)
+	f.created = append(f.created, strings.Join([]string{"new", repoRoot, path, branch, startPoint}, "::"))
+	return nil
+}
+func (f *fakeCreateGit) CreateWorktreeExisting(repoRoot, path, branch string) error {
+	_ = os.MkdirAll(path, 0o755)
+	f.createdExisting = append(f.createdExisting, strings.Join([]string{repoRoot, path, branch}, "::"))
+	return nil
+}
+func (f *fakeCreateGit) BranchExists(repoRoot, branch string) (bool, error) {
+	if f.branchExistsByID == nil {
+		return false, nil
+	}
+	return f.branchExistsByID[repoRoot+"::"+branch], nil
+}
+func (f *fakeCreateGit) SyncBaseBranch(repoRoot, baseBranch string) (string, error) {
+	f.syncCalls = append(f.syncCalls, repoRoot+"::"+baseBranch)
+	if f.syncErr != nil {
+		return "", f.syncErr
+	}
+	return "origin/" + baseBranch, nil
+}
 func (f *fakeCreateGit) RemoveWorktree(repoRoot, path string, force bool) error {
 	f.removed = append(f.removed, repoRoot+"::"+path)
 	return nil
@@ -36,9 +64,12 @@ func (f *fakeCreateGit) DiscoverFlutterRepos(scope string) ([]domain.DiscoveredF
 	return f.repos, nil
 }
 
-type fakeCreatePrompt struct{}
+type fakeCreatePrompt struct{ forceDecline bool }
 
 func (f *fakeCreatePrompt) Confirm(message string, nonInteractive, assumeYes bool) (bool, error) {
+	if f.forceDecline {
+		return false, nil
+	}
 	return true, nil
 }
 func (f *fakeCreatePrompt) ConfirmWithToken(message, token string, nonInteractive, assumeYes bool) (bool, error) {
@@ -85,7 +116,7 @@ func TestBuildDryPlanBuildsRootAndPackagePlans(t *testing.T) {
 	if plan.Root.Repo.Name != "root-app" || len(plan.Packages) != 1 {
 		t.Fatalf("unexpected plan: %+v", plan)
 	}
-	wantPkgBranch := "feature/" + normalizeWorktreeName(name) + "-core-pkg"
+	wantPkgBranch := "feature/workspace-demo"
 	if plan.Packages[0].Branch != wantPkgBranch {
 		t.Fatalf("unexpected package branch: %s", plan.Packages[0].Branch)
 	}
@@ -123,12 +154,12 @@ func TestBuildDryPlanGeneratesPerPackageBranchFromWorkspaceName(t *testing.T) {
 	if len(plan.Packages) != 1 {
 		t.Fatalf("unexpected package count: %d", len(plan.Packages))
 	}
-	wantPkgBranch := "feature/feature-login-core-pkg"
+	wantPkgBranch := "feature/feature-login"
 	if plan.Packages[0].Branch != wantPkgBranch {
 		t.Fatalf("package branch mismatch. got=%s want=%s", plan.Packages[0].Branch, wantPkgBranch)
 	}
-	if plan.Packages[0].Branch == plan.Root.Branch {
-		t.Fatalf("package branch must not reuse root branch. root=%s package=%s", plan.Root.Branch, plan.Packages[0].Branch)
+	if plan.Packages[0].Branch != plan.Root.Branch {
+		t.Fatalf("package branch must match root branch. root=%s package=%s", plan.Root.Branch, plan.Packages[0].Branch)
 	}
 }
 
@@ -254,7 +285,7 @@ func TestApplyAddsOverrideEntryToGitignoreWhenMissing(t *testing.T) {
 		t.Fatalf("failed to write .gitignore fixture: %v", err)
 	}
 
-	if _, err := svc.Apply(plan); err != nil {
+	if _, err := svc.Apply(plan, domain.CreateApplyOptions{}); err != nil {
 		t.Fatalf("apply failed: %v", err)
 	}
 
@@ -303,7 +334,7 @@ func TestApplyDoesNotDuplicateOverrideEntryInGitignore(t *testing.T) {
 		t.Fatalf("failed to write .gitignore fixture: %v", err)
 	}
 
-	if _, err := svc.Apply(plan); err != nil {
+	if _, err := svc.Apply(plan, domain.CreateApplyOptions{}); err != nil {
 		t.Fatalf("apply failed: %v", err)
 	}
 
@@ -317,5 +348,379 @@ func TestApplyDoesNotDuplicateOverrideEntryInGitignore(t *testing.T) {
 	}
 	if got != initial {
 		t.Fatalf("expected .gitignore to remain unchanged. got=%q want=%q", got, initial)
+	}
+}
+
+func TestApplyFailsInNonInteractiveModeWhenExistingBranchReuseNotExplicit(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoRoot := filepath.Join(root, "root-app")
+	g := &fakeCreateGit{
+		repos: []domain.DiscoveredFlutterRepo{{Name: "root-app", RepoRoot: repoRoot, PackageName: "root_app"}},
+		branchExistsByID: map[string]bool{
+			repoRoot + "::feature/reuse-me": true,
+		},
+	}
+	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
+
+	plan, err := svc.BuildDryPlan(domain.CreateInput{
+		Name:           "reuse-me",
+		Branch:         "feature/reuse-me",
+		BaseBranch:     "main",
+		ExecutionScope: root,
+		RootSelector:   "root-app",
+		NonInteractive: true,
+	})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	_, err = svc.Apply(plan, domain.CreateApplyOptions{NonInteractive: true, ReuseExistingBranch: false})
+	if err == nil {
+		t.Fatalf("expected branch reuse confirmation error")
+	}
+	if !strings.Contains(err.Error(), "Existing branch reuse requires explicit --reuse-existing-branch") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestApplyReusesExistingBranchWhenUserConfirms(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoRoot := filepath.Join(root, "root-app")
+	g := &fakeCreateGit{
+		repos: []domain.DiscoveredFlutterRepo{{Name: "root-app", RepoRoot: repoRoot, PackageName: "root_app"}},
+		branchExistsByID: map[string]bool{
+			repoRoot + "::feature/reuse-me": true,
+		},
+	}
+	p := &fakeCreatePrompt{}
+	svc := NewCreateService(g, &fakeRegistry{}, p)
+
+	plan, err := svc.BuildDryPlan(domain.CreateInput{
+		Name:           "reuse-me",
+		Branch:         "feature/reuse-me",
+		BaseBranch:     "main",
+		ExecutionScope: root,
+		RootSelector:   "root-app",
+	})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	if _, err := svc.Apply(plan, domain.CreateApplyOptions{}); err != nil {
+		t.Fatalf("apply failed: %v", err)
+	}
+	if len(g.createdExisting) != 1 {
+		t.Fatalf("expected existing-branch worktree path, got %+v", g.createdExisting)
+	}
+	if len(g.syncCalls) != 0 {
+		t.Fatalf("expected no base sync for existing branch reuse, got %+v", g.syncCalls)
+	}
+}
+
+func TestApplyCancelsWhenUserDeclinesExistingBranchReuse(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoRoot := filepath.Join(root, "root-app")
+	g := &fakeCreateGit{
+		repos: []domain.DiscoveredFlutterRepo{{Name: "root-app", RepoRoot: repoRoot, PackageName: "root_app"}},
+		branchExistsByID: map[string]bool{
+			repoRoot + "::feature/reuse-no": true,
+		},
+	}
+	p := &fakeCreatePrompt{forceDecline: true}
+	svc := NewCreateService(g, &fakeRegistry{}, p)
+
+	plan, err := svc.BuildDryPlan(domain.CreateInput{
+		Name:           "reuse-no",
+		Branch:         "feature/reuse-no",
+		BaseBranch:     "main",
+		ExecutionScope: root,
+		RootSelector:   "root-app",
+	})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	_, err = svc.Apply(plan, domain.CreateApplyOptions{})
+	if err == nil {
+		t.Fatalf("expected cancellation error")
+	}
+	if !strings.Contains(err.Error(), "Create cancelled by user while confirming branch reuse") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestApplySyncsBaseBranchBeforeNewBranchCreation(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoRoot := filepath.Join(root, "root-app")
+	g := &fakeCreateGit{
+		repos: []domain.DiscoveredFlutterRepo{{Name: "root-app", RepoRoot: repoRoot, PackageName: "root_app"}},
+	}
+	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
+
+	plan, err := svc.BuildDryPlan(domain.CreateInput{
+		Name:           "sync-order",
+		Branch:         "feature/sync-order",
+		BaseBranch:     "main",
+		ExecutionScope: root,
+		RootSelector:   "root-app",
+		NonInteractive: true,
+	})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	if _, err := svc.Apply(plan, domain.CreateApplyOptions{NonInteractive: true}); err != nil {
+		t.Fatalf("apply failed: %v", err)
+	}
+	if len(g.syncCalls) == 0 {
+		t.Fatalf("expected base sync call before worktree create")
+	}
+	if len(g.created) == 0 {
+		t.Fatalf("expected new worktree creation call")
+	}
+}
+
+func TestBuildDryPlanUsesDefaultBranchWhenBranchOmitted(t *testing.T) {
+	root := t.TempDir()
+	repoRoot := filepath.Join(root, "root-app")
+	repoPkg := filepath.Join(root, "core-pkg")
+	g := &fakeCreateGit{
+		repos: []domain.DiscoveredFlutterRepo{
+			{Name: "root-app", RepoRoot: repoRoot, PackageName: "root_app"},
+			{Name: "core-pkg", RepoRoot: repoPkg, PackageName: "core"},
+		},
+	}
+	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
+
+	plan, err := svc.BuildDryPlan(domain.CreateInput{
+		Name:              "Feature Login",
+		BaseBranch:        "main",
+		ExecutionScope:    root,
+		RootSelector:      "root-app",
+		PackageSelectors:  []string{"core-pkg"},
+		PackageBaseBranch: map[string]string{"core-pkg": "develop"},
+		GenerateWorkspace: false,
+		NonInteractive:    true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if plan.Root.Branch != "feature/feature-login" {
+		t.Fatalf("unexpected default root branch: %s", plan.Root.Branch)
+	}
+	if plan.Packages[0].Branch != "feature/feature-login" {
+		t.Fatalf("unexpected default package branch: %s", plan.Packages[0].Branch)
+	}
+}
+
+func TestApplyNonInteractiveRequiresExplicitReuseForExistingBranch(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoRoot := filepath.Join(root, "root-app")
+	g := &fakeCreateGit{
+		repos: []domain.DiscoveredFlutterRepo{{Name: "root-app", RepoRoot: repoRoot, PackageName: "root_app"}},
+		branchExistsByID: map[string]bool{
+			repoRoot + "::feature/existing": true,
+		},
+	}
+	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
+
+	name := "existing-branch-" + strings.ReplaceAll(filepath.Base(root), "_", "-")
+	_ = os.RemoveAll(filepath.Join(destinationRoot(), normalizeWorktreeName(name)))
+
+	plan, err := svc.BuildDryPlan(domain.CreateInput{
+		Name:           name,
+		Branch:         "feature/existing",
+		BaseBranch:     "main",
+		ExecutionScope: root,
+		RootSelector:   "root-app",
+		NonInteractive: true,
+	})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	_, err = svc.Apply(plan, domain.CreateApplyOptions{NonInteractive: true})
+	if err == nil {
+		t.Fatalf("expected non-interactive reuse error")
+	}
+	if !strings.Contains(err.Error(), "Existing branch reuse requires explicit --reuse-existing-branch") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestApplyReusesExistingBranchWhenAllowed(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoRoot := filepath.Join(root, "root-app")
+	g := &fakeCreateGit{
+		repos: []domain.DiscoveredFlutterRepo{{Name: "root-app", RepoRoot: repoRoot, PackageName: "root_app"}},
+		branchExistsByID: map[string]bool{
+			repoRoot + "::feature/existing": true,
+		},
+	}
+	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
+
+	name := "existing-branch-ok-" + strings.ReplaceAll(filepath.Base(root), "_", "-")
+	_ = os.RemoveAll(filepath.Join(destinationRoot(), normalizeWorktreeName(name)))
+
+	plan, err := svc.BuildDryPlan(domain.CreateInput{
+		Name:           name,
+		Branch:         "feature/existing",
+		BaseBranch:     "main",
+		ExecutionScope: root,
+		RootSelector:   "root-app",
+		NonInteractive: true,
+	})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	if _, err := svc.Apply(plan, domain.CreateApplyOptions{NonInteractive: true, ReuseExistingBranch: true}); err != nil {
+		t.Fatalf("expected reuse to pass, got: %v", err)
+	}
+	if len(g.createdExisting) != 1 {
+		t.Fatalf("expected existing branch create path, got=%v", g.createdExisting)
+	}
+	if len(g.syncCalls) != 0 {
+		t.Fatalf("sync should not run when branch already exists, got=%v", g.syncCalls)
+	}
+}
+
+func TestApplySyncsBaseBeforeCreatingNewBranch(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoRoot := filepath.Join(root, "root-app")
+	g := &fakeCreateGit{
+		repos: []domain.DiscoveredFlutterRepo{{Name: "root-app", RepoRoot: repoRoot, PackageName: "root_app"}},
+	}
+	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
+
+	name := "sync-before-create-" + strings.ReplaceAll(filepath.Base(root), "_", "-")
+	_ = os.RemoveAll(filepath.Join(destinationRoot(), normalizeWorktreeName(name)))
+
+	plan, err := svc.BuildDryPlan(domain.CreateInput{
+		Name:           name,
+		Branch:         "feature/new-branch",
+		BaseBranch:     "main",
+		ExecutionScope: root,
+		RootSelector:   "root-app",
+		NonInteractive: true,
+	})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	if _, err := svc.Apply(plan, domain.CreateApplyOptions{NonInteractive: true}); err != nil {
+		t.Fatalf("expected apply success: %v", err)
+	}
+	if len(g.syncCalls) != 1 || g.syncCalls[0] != repoRoot+"::main" {
+		t.Fatalf("expected one sync before create, got=%v", g.syncCalls)
+	}
+	if len(g.created) != 1 || !strings.HasPrefix(g.created[0], "new::") {
+		t.Fatalf("expected new branch create path, got=%v", g.created)
+	}
+}
+
+func TestApplyReturnsErrorAndSkipsWorktreeCreationWhenSyncFails(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoRoot := filepath.Join(root, "root-app")
+	g := &fakeCreateGit{
+		repos:   []domain.DiscoveredFlutterRepo{{Name: "root-app", RepoRoot: repoRoot, PackageName: "root_app"}},
+		syncErr: errors.New("sync failed"),
+	}
+	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
+
+	name := "sync-fail-" + strings.ReplaceAll(filepath.Base(root), "_", "-")
+	_ = os.RemoveAll(filepath.Join(destinationRoot(), normalizeWorktreeName(name)))
+
+	plan, err := svc.BuildDryPlan(domain.CreateInput{
+		Name:           name,
+		Branch:         "feature/sync-fail",
+		BaseBranch:     "main",
+		ExecutionScope: root,
+		RootSelector:   "root-app",
+		NonInteractive: true,
+	})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	_, err = svc.Apply(plan, domain.CreateApplyOptions{NonInteractive: true})
+	if err == nil {
+		t.Fatalf("expected apply to fail when base branch sync fails")
+	}
+	if len(g.created) != 0 {
+		t.Fatalf("expected no new worktree creation when sync fails, got=%v", g.created)
+	}
+	if len(g.createdExisting) != 0 {
+		t.Fatalf("expected no existing-branch worktree creation when sync fails, got=%v", g.createdExisting)
+	}
+}
+
+func TestBuildDryPlanPackageBranchUsesExactExplicitOrDefaultRootBranch(t *testing.T) {
+	tests := []struct {
+		name       string
+		branch     string
+		wantBranch string
+	}{
+		{name: "explicit branch", branch: "release/2.3.0", wantBranch: "release/2.3.0"},
+		{name: "default branch", branch: "", wantBranch: "feature/feature-login"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			repoRoot := filepath.Join(root, "root-app")
+			repoPkg := filepath.Join(root, "core-pkg")
+			g := &fakeCreateGit{
+				repos: []domain.DiscoveredFlutterRepo{
+					{Name: "root-app", RepoRoot: repoRoot, PackageName: "root_app"},
+					{Name: "core-pkg", RepoRoot: repoPkg, PackageName: "core"},
+				},
+			}
+			svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
+
+			plan, err := svc.BuildDryPlan(domain.CreateInput{
+				Name:              "Feature Login",
+				Branch:            tc.branch,
+				BaseBranch:        "main",
+				ExecutionScope:    root,
+				RootSelector:      "root-app",
+				PackageSelectors:  []string{"core-pkg"},
+				PackageBaseBranch: map[string]string{"core-pkg": "develop"},
+				NonInteractive:    true,
+			})
+			if err != nil {
+				t.Fatalf("build plan failed: %v", err)
+			}
+			if plan.Root.Branch != tc.wantBranch {
+				t.Fatalf("root branch mismatch. got=%s want=%s", plan.Root.Branch, tc.wantBranch)
+			}
+			if len(plan.Packages) != 1 || plan.Packages[0].Branch != tc.wantBranch {
+				t.Fatalf("package branch mismatch. got=%+v want=%s", plan.Packages, tc.wantBranch)
+			}
+		})
 	}
 }
