@@ -1,0 +1,129 @@
+package domain
+
+import "path/filepath"
+
+type ErrorCategory string
+
+const (
+	CategoryUnexpected   ErrorCategory = "unexpected"
+	CategoryInput        ErrorCategory = "input"
+	CategoryPrecondition ErrorCategory = "precondition"
+	CategoryGit          ErrorCategory = "git"
+	CategoryPersistence  ErrorCategory = "persistence"
+)
+
+type AppError struct {
+	Category ErrorCategory
+	Message  string
+	Hint     string
+	Code     int
+	Cause    error
+}
+
+func (e *AppError) Error() string { return e.Message }
+func (e *AppError) Unwrap() error { return e.Cause }
+
+func NewError(category ErrorCategory, code int, message, hint string, cause error) *AppError {
+	return &AppError{Category: category, Code: code, Message: message, Hint: hint, Cause: cause}
+}
+
+type DiscoveredFlutterRepo struct {
+	Name        string
+	RepoRoot    string
+	PackageName string
+}
+
+type RegistryRecord struct {
+	Name      string `json:"name"`
+	Branch    string `json:"branch"`
+	Path      string `json:"path"`
+	RepoRoot  string `json:"repo_root"`
+	CreatedAt string `json:"created_at,omitempty"`
+	Status    string `json:"status"`
+}
+
+type RegistryDocument struct {
+	Version int              `json:"version"`
+	Records []RegistryRecord `json:"records"`
+}
+
+type GitWorktreeEntry struct {
+	Path        string
+	Head        string
+	Branch      string
+	IsBare      bool
+	IsDetached  bool
+	IsLocked    bool
+	PruneReason string
+}
+
+type ListRow struct {
+	Name     string
+	Branch   string
+	Path     string
+	RepoRoot string
+	Status   string
+}
+
+type CompleteInput struct {
+	Name           string
+	Yes            bool
+	Force          bool
+	NonInteractive bool
+}
+
+type CompleteResult struct {
+	Record        RegistryRecord
+	RemovedBranch bool
+	NextStep      string
+}
+
+type CreateInput struct {
+	Name              string
+	Branch            string
+	BaseBranch        string
+	ExecutionScope    string
+	RootSelector      string
+	PackageSelectors  []string
+	PackageBaseBranch map[string]string
+	GenerateWorkspace bool
+	Yes               bool
+	NonInteractive    bool
+}
+
+type PlannedWorktree struct {
+	Repo       DiscoveredFlutterRepo
+	Role       string
+	Path       string
+	Branch     string
+	BaseBranch string
+}
+
+type CreateDryPlan struct {
+	NormalizedName   string
+	ContainerPath    string
+	Root             PlannedWorktree
+	Packages         []PlannedWorktree
+	OverridePath     string
+	OverrideContent  string
+	WorkspacePath    string
+	WorkspaceFolders []string
+}
+
+type CreateResult struct {
+	Record           RegistryRecord
+	NextStep         string
+	SelectedPackages []string
+	WorkspacePath    string
+}
+
+func NormalizePath(path string) string {
+	if path == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return abs
+}

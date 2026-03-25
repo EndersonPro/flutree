@@ -1,0 +1,98 @@
+name: release-brew
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release-brew:
+    runs-on: macos-14
+    env:
+      ARCH: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Compute version and artifact names
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "TARBALL=flutree-${VERSION}-macos-${ARCH}.tar.gz" >> "$GITHUB_ENV"
+          echo "SHAFILE=flutree-${VERSION}-macos-${ARCH}.sha256" >> "$GITHUB_ENV"
+
+      - name: Validate naming contract from packaging script
+        run: |
+          CONTRACT_OUTPUT="$(VERSION="$VERSION" ARCH="$ARCH" ./scripts/package_macos.sh contract)"
+          EXPECTED_TARBALL="$(printf '%s\n' "$CONTRACT_OUTPUT" | sed -n '1p')"
+          EXPECTED_SHAFILE="$(printf '%s\n' "$CONTRACT_OUTPUT" | sed -n '2p')"
+          test "$EXPECTED_TARBALL" = "$TARBALL"
+          test "$EXPECTED_SHAFILE" = "$SHAFILE"
+
+      - name: Build artifacts
+        run: VERSION="$VERSION" ARCH="$ARCH" ./scripts/package_macos.sh build
+
+      - name: Verify required artifacts exist
+        run: |
+          test -f "dist/$TARBALL"
+          test -f "dist/$SHAFILE"
+
+      - name: Smoke verify binary
+        run: ./scripts/verify_macos_binary.sh "dist/$TARBALL"
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/${{ env.TARBALL }}
+            dist/${{ env.SHAFILE }}
+
+      - name: Validate tap token secret
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [[ -z "${HOMEBREW_TAP_TOKEN}" ]]; then
+            echo "Missing secret HOMEBREW_TAP_TOKEN with write access to EndersonPro/homebrew-flutree"
+            exit 1
+          fi
+
+      - name: Checkout Homebrew tap repository
+        uses: actions/checkout@v4
+        with:
+          repository: EndersonPro/homebrew-flutree
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update tap formula to released version
+        run: |
+          SHA256="$(cat "dist/$SHAFILE")"
+          FORMULA_PATH="homebrew-tap/Formula/flutree.rb"
+
+          test -f "$FORMULA_PATH"
+          sed -i.bak -E "s/^  version \".*\"$/  version \"$VERSION\"/" "$FORMULA_PATH"
+          sed -i.bak -E "s/^  sha256 \".*\"$/  sha256 \"$SHA256\"/" "$FORMULA_PATH"
+          rm -f "${FORMULA_PATH}.bak"
+
+      - name: Commit and push tap formula update
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/flutree.rb
+          if git diff --cached --quiet; then
+            echo "Tap formula already up to date."
+            exit 0
+          fi
+          git commit -m "chore: release flutree ${VERSION}"
+          git push origin HEAD:main

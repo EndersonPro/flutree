@@ -1,0 +1,19 @@
+# Build artifacts
+build/
+dist/
+
+# Editor and IDE files
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Go
+bin/
+*.test
+coverage.out
+/flutree
