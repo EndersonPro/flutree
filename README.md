@@ -1,5 +1,7 @@
 # flutree
 
+![flutree logo](assets/flutree-icon.png)
+
 [![tests](https://github.com/EndersonPro/flutree/actions/workflows/tests.yml/badge.svg)](https://github.com/EndersonPro/flutree/actions/workflows/tests.yml)
 [![Release](https://img.shields.io/github/v/release/EndersonPro/flutree?color=green&style=flat-square)](https://github.com/EndersonPro/flutree/releases/latest)
 [![License](https://img.shields.io/github/license/EndersonPro/flutree?color=blue&style=flat-square)](LICENSE)
@@ -7,6 +9,26 @@
 [![Last Commit](https://img.shields.io/github/last-commit/EndersonPro/flutree?style=flat-square)](https://github.com/EndersonPro/flutree/commits/main)
 
 `flutree` is a Go CLI to manage Git worktrees for multi-package Flutter workflows.
+
+## Table of Contents
+
+- [🚀 Features](#-features)
+- [📦 Installation](#-installation)
+- [🔧 Requirements](#-requirements)
+- [🏗️ Commands Reference](#%EF%B8%8F-commands-reference)
+  - [create](#create)
+  - [list](#list)
+  - [complete](#complete)
+  - [pubget](#pubget)
+- [🛠️ Quickstart](#%EF%B8%8F-quickstart)
+- [⚙️ Advanced Usage](#%EF%B8%8F-advanced-usage)
+- [🧪 Testing](#-testing)
+- [🤖 Non-interactive behavior](#-non-interactive-behavior)
+- [🗂️ Registry](#%EF%B8%8F-registry)
+- [🏗️ Project structure](#%EF%B8%8F-project-structure)
+- [🤝 Contributing](#-contributing)
+- [📄 License](#-license)
+- [🙏 Acknowledgments](#-acknowledgments)
 
 ## 🚀 Features
 
@@ -97,12 +119,70 @@ VSCode workspace output is MVP-only and includes `folders` entries only.
 `settings`, `tasks`, and `launch` are intentionally not generated.
 Use `--no-workspace` to skip `.code-workspace` output entirely.
 
-## 📋 Commands
+## 🏗️ Commands Reference
 
-- `create`: creates a managed worktree and stores metadata in a global registry.
-- `list`: lists managed worktrees (scoped to current repo when available, otherwise global registry scope).
-- `complete`: remove-only completion flow (removes worktree and keeps local branch).
-- `pubget`: runs `pub get` for all managed package repos in parallel, then runs root last.
+### create
+
+Creates a managed worktree and stores metadata in a global registry.
+
+Usage:
+```
+flutree create <name> [options]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--branch` | string | `feature/<name>` | Target branch name |
+| `--base-branch` | string | `main` | Base branch for worktree creation |
+| `--scope` | string | `.` | Directory scope used to discover Flutter repositories |
+| `--root-repo` | string |  | Root repository selector (required in non-interactive mode) |
+| `--workspace` | boolean | `true` | Generate VSCode workspace file |
+| `--no-workspace` | boolean | `false` | Disable VSCode workspace generation |
+| `--yes` | boolean | `false` | Acknowledge dry plan automatically in non-interactive mode |
+| `--non-interactive` | boolean | `false` | Disable prompts |
+| `--package` | string |  | Package repository selector (repeatable) |
+| `--package-base` | string |  | Override package base branch as `<selector>=<branch>` (repeatable) |
+
+### list
+
+Lists managed worktrees (scoped to current repo when available, otherwise global registry scope).
+
+Usage:
+```
+flutree list [--all]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--all` | boolean | `false` | Include unmanaged Git worktrees |
+
+### complete
+
+Remove-only completion flow (removes worktree and keeps local branch).
+
+Usage:
+```
+flutree complete <name> [options]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--yes` | boolean | `false` | Skip interactive confirmation |
+| `--force` | boolean | `false` | Force worktree removal |
+| `--non-interactive` | boolean | `false` | Disable prompts |
+
+### pubget
+
+Runs `pub get` for all managed package repos in parallel, then runs root last.
+
+Usage:
+```
+flutree pubget <name> [--force]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--force` | boolean | `false` | Clean cache and remove `pubspec.lock` before `pub get` |
 
 ## 🧪 Testing
 
@@ -167,3 +247,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) for interactive UI
 - Inspired by the need to manage complex Flutter monorepo workflows
+
+## 🖼️ Logo Usage
+
+The flutree logo in `assets/flutree-icon.png` can be used for social media previews and Open Graph metadata. Note that GitHub repository icons cannot be set via code - you must configure the repository icon manually in the GitHub repository settings.
