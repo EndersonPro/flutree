@@ -51,6 +51,10 @@ go test ./...
 - Remove-only MVP completion flow.
 - Removes the worktree and keeps the local branch.
 
+`flutree pubget NAME [OPTIONS]`
+- Runs `pub get` in all package repos for a managed workspace in parallel.
+- Runs root repo `pub get` only after package phase completes.
+
 ## create
 
 Options:
@@ -129,6 +133,18 @@ Examples:
 ```bash
 flutree complete auth-fix --yes
 flutree complete auth-fix --non-interactive --yes
+```
+
+## pubget
+
+Options:
+- `--force`: run cleanup before `pub get` (`flutter clean` for Flutter repos, remove `.dart_tool` for Dart repos) and remove `pubspec.lock`.
+
+Examples:
+
+```bash
+flutree pubget auth-fix
+flutree pubget auth-fix --force
 ```
 
 ## Exit and Error Behavior

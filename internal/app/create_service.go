@@ -17,6 +17,8 @@ type CreateService struct {
 	prompt   PromptPort
 }
 
+const overrideFileName = "pubspec_overrides.yaml"
+
 func NewCreateService(git GitPort, registry RegistryPort, prompt PromptPort) *CreateService {
 	return &CreateService{git: git, registry: registry, prompt: prompt}
 }
@@ -86,7 +88,7 @@ func (s *CreateService) BuildDryPlan(input domain.CreateInput) (domain.CreateDry
 	}
 	sort.Slice(packagePlans, func(i, j int) bool { return packagePlans[i].Repo.Name < packagePlans[j].Repo.Name })
 
-	overridePath := filepath.Join(rootPlan.Path, "pubspec_override.yaml")
+	overridePath := filepath.Join(rootPlan.Path, overrideFileName)
 	overrideContent := buildOverrideContent(rootPlan, packagePlans)
 
 	workspacePath := ""
@@ -157,7 +159,12 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan) (domain.CreateResult, e
 
 	if err := os.WriteFile(plan.OverridePath, []byte(plan.OverrideContent), 0o644); err != nil {
 		rollback()
-		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to write pubspec_override.yaml.", plan.OverridePath, err)
+		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to write pubspec_overrides.yaml.", plan.OverridePath, err)
+	}
+
+	if err := ensureGitignoreContains(plan.Root.Path, filepath.Base(plan.OverridePath)); err != nil {
+		rollback()
+		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to update .gitignore for pubspec_overrides.yaml.", filepath.Join(plan.Root.Path, ".gitignore"), err)
 	}
 
 	if plan.WorkspacePath != "" {
@@ -321,19 +328,36 @@ func buildOverrideContent(root domain.PlannedWorktree, packages []domain.Planned
 }
 
 func buildWorkspaceFolders(root domain.PlannedWorktree, packages []domain.PlannedWorktree, container string) []string {
-	folders := []string{}
-	if rel, err := filepath.Rel(container, root.Path); err == nil {
-		folders = append(folders, filepath.ToSlash(rel))
-	}
+	folders := []string{workspaceFolderPath(container, root.Path)}
 	for _, pkg := range packages {
-		if rel, err := filepath.Rel(container, pkg.Path); err == nil {
-			folders = append(folders, filepath.ToSlash(rel))
-		}
+		folders = append(folders, workspaceFolderPath(container, pkg.Path))
 	}
+	folders = dedupStringsPreservingOrder(folders)
 	if len(folders) > 1 {
 		sort.Strings(folders[1:])
 	}
 	return folders
+}
+
+func workspaceFolderPath(container, target string) string {
+	rel, err := filepath.Rel(container, target)
+	if err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." {
+		return filepath.ToSlash(rel)
+	}
+	return filepath.ToSlash(target)
+}
+
+func dedupStringsPreservingOrder(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func writeWorkspace(path string, folders []string) error {
@@ -357,4 +381,27 @@ func writeWorkspace(path string, folders []string) error {
 		return domain.NewError(domain.CategoryPersistence, 5, "Failed to write VSCode workspace file.", path, err)
 	}
 	return nil
+}
+
+func ensureGitignoreContains(repoPath, entry string) error {
+	gitignorePath := filepath.Join(repoPath, ".gitignore")
+
+	content := ""
+	if b, err := os.ReadFile(gitignorePath); err == nil {
+		content = string(b)
+		for _, line := range strings.Split(content, "\n") {
+			if strings.TrimSpace(line) == entry {
+				return nil
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	content += entry + "\n"
+
+	return os.WriteFile(gitignorePath, []byte(content), 0o644)
 }
