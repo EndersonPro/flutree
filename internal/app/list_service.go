@@ -3,6 +3,7 @@ package app
 import (
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/EndersonPro/flutree/internal/domain"
 )
@@ -63,10 +64,22 @@ func (s *ListService) Run(showAll bool) ([]domain.ListRow, error) {
 	}
 
 	managed := map[string]struct{}{}
+	packageCountByRoot := map[string]int{}
+	for _, rec := range records {
+		managed[filepath.Clean(rec.Path)] = struct{}{}
+		rootName, isPackage := splitPackageRecordName(rec.Name)
+		if isPackage {
+			packageCountByRoot[rootName]++
+		}
+	}
+
 	rows := make([]domain.ListRow, 0, len(records))
 	for _, rec := range records {
+		if _, isPackage := splitPackageRecordName(rec.Name); isPackage {
+			continue
+		}
+
 		rp := filepath.Clean(rec.Path)
-		managed[rp] = struct{}{}
 		status := "missing"
 		if rec.Status == "completed" {
 			status = "completed"
@@ -74,11 +87,12 @@ func (s *ListService) Run(showAll bool) ([]domain.ListRow, error) {
 			status = "active"
 		}
 		rows = append(rows, domain.ListRow{
-			Name:     rec.Name,
-			Branch:   rec.Branch,
-			Path:     rec.Path,
-			RepoRoot: rec.RepoRoot,
-			Status:   status,
+			Name:         rec.Name,
+			Branch:       rec.Branch,
+			Path:         rec.Path,
+			RepoRoot:     rec.RepoRoot,
+			Status:       status,
+			PackageCount: packageCountByRoot[rec.Name],
 		})
 	}
 
@@ -114,4 +128,12 @@ func (s *ListService) Run(showAll bool) ([]domain.ListRow, error) {
 		return rows[i].Path < rows[j].Path
 	})
 	return rows, nil
+}
+
+func splitPackageRecordName(name string) (string, bool) {
+	parts := strings.SplitN(name, "__pkg__", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return name, false
+	}
+	return parts[0], true
 }

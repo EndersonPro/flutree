@@ -58,11 +58,12 @@ type GitWorktreeEntry struct {
 }
 
 type ListRow struct {
-	Name     string
-	Branch   string
-	Path     string
-	RepoRoot string
-	Status   string
+	Name         string
+	Branch       string
+	Path         string
+	RepoRoot     string
+	Status       string
+	PackageCount int
 }
 
 type CompleteInput struct {
@@ -76,6 +77,32 @@ type CompleteResult struct {
 	Record        RegistryRecord
 	RemovedBranch bool
 	NextStep      string
+}
+
+type PubTool string
+
+const (
+	PubToolFlutter PubTool = "flutter"
+	PubToolDart    PubTool = "dart"
+)
+
+type PubGetInput struct {
+	Name  string
+	Force bool
+}
+
+type PubGetRepoResult struct {
+	Name string
+	Path string
+	Tool PubTool
+	Role string
+}
+
+type PubGetResult struct {
+	WorkspaceName string
+	Root          PubGetRepoResult
+	Packages      []PubGetRepoResult
+	Force         bool
 }
 
 type CreateInput struct {

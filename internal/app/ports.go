@@ -26,3 +26,10 @@ type PromptPort interface {
 	SelectPackages(message string, choices []string, nonInteractive bool) ([]string, error)
 	AskText(message, defaultValue string, nonInteractive bool) (string, error)
 }
+
+type PubPort interface {
+	DetectTool(repoPath string) (domain.PubTool, error)
+	Clean(repoPath string, tool domain.PubTool) error
+	RemoveLock(repoPath string) error
+	Get(repoPath string, tool domain.PubTool) error
+}

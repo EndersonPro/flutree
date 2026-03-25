@@ -16,7 +16,7 @@ This runbook documents how to publish macOS Homebrew assets and keep the in-repo
 - validates architecture contract (`ARCH=arm64` only).
 
 Required env vars:
-- `VERSION` (no leading `v`, example `0.7.0`)
+- `VERSION` (no leading `v`, example `0.8.0`)
 - `ARCH` (`arm64`)
 
 Optional env var:
@@ -25,9 +25,9 @@ Optional env var:
 Examples:
 
 ```bash
-VERSION=0.7.0 ARCH=arm64 ./scripts/package_macos.sh build
-VERSION=0.7.0 ARCH=arm64 ./scripts/package_macos.sh contract
-./scripts/verify_macos_binary.sh dist/flutree-0.7.0-macos-arm64.tar.gz
+VERSION=0.8.0 ARCH=arm64 ./scripts/package_macos.sh build
+VERSION=0.8.0 ARCH=arm64 ./scripts/package_macos.sh contract
+./scripts/verify_macos_binary.sh dist/flutree-0.8.0-macos-arm64.tar.gz
 ```
 
 ## Formula contract

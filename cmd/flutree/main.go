@@ -10,6 +10,7 @@ import (
 	"github.com/EndersonPro/flutree/internal/domain"
 	infraGit "github.com/EndersonPro/flutree/internal/infra/git"
 	"github.com/EndersonPro/flutree/internal/infra/prompt"
+	infraPub "github.com/EndersonPro/flutree/internal/infra/pub"
 	"github.com/EndersonPro/flutree/internal/infra/registry"
 	"github.com/EndersonPro/flutree/internal/runtime"
 	"github.com/EndersonPro/flutree/internal/ui"
@@ -29,6 +30,8 @@ func main() {
 		runtime.ExitOnError(runList(os.Args[2:]))
 	case "complete":
 		runtime.ExitOnError(runComplete(os.Args[2:]))
+	case "pubget":
+		runtime.ExitOnError(runPubGet(os.Args[2:]))
 	case "--help", "-h", "help":
 		printHelp()
 	default:
@@ -120,8 +123,11 @@ func runCreate(args []string) error {
 
 	genWorkspace := *workspace && !*noWorkspace
 
-	service := app.NewCreateService(&infraGit.Gateway{}, registry.NewDefault(), prompt.New())
-	plan, err := service.BuildDryPlan(domain.CreateInput{
+	gitGateway := &infraGit.Gateway{}
+	promptAdapter := prompt.New()
+	service := app.NewCreateService(gitGateway, registry.NewDefault(), promptAdapter)
+
+	createInput := domain.CreateInput{
 		Name:              name,
 		Branch:            branchName,
 		BaseBranch:        *baseBranch,
@@ -132,6 +138,55 @@ func runCreate(args []string) error {
 		GenerateWorkspace: genWorkspace,
 		Yes:               *yes,
 		NonInteractive:    *nonInteractive,
+	}
+
+	applyAfterDryRun := true
+	wizardUsed := false
+	if !*nonInteractive && ui.SupportsInteractiveWizard() {
+		repos, err := gitGateway.DiscoverFlutterRepos(*scope)
+		if err != nil {
+			return err
+		}
+
+		wizardResult, err := ui.RunCreateWizard(ui.CreateWizardInput{
+			Name:              name,
+			Branch:            branchName,
+			BaseBranch:        *baseBranch,
+			GenerateWorkspace: genWorkspace,
+			RootSelector:      *rootRepo,
+			PackageSelectors:  packages,
+			PackageBaseBranch: baseMap,
+		}, repos)
+		if err != nil {
+			return err
+		}
+		if wizardResult.Cancelled {
+			return domain.NewError(domain.CategoryInput, 2, "Create cancelled before execution.", "Re-run create to open the interactive flow again.", nil)
+		}
+
+		createInput.Name = wizardResult.Name
+		createInput.Branch = wizardResult.Branch
+		createInput.BaseBranch = wizardResult.BaseBranch
+		createInput.RootSelector = wizardResult.RootSelector
+		createInput.PackageSelectors = wizardResult.PackageSelectors
+		createInput.PackageBaseBranch = wizardResult.PackageBaseBranch
+		createInput.GenerateWorkspace = wizardResult.GenerateWorkspace
+		createInput.NonInteractive = true
+		applyAfterDryRun = wizardResult.Apply
+		wizardUsed = true
+	}
+
+	plan, err := service.BuildDryPlan(domain.CreateInput{
+		Name:              createInput.Name,
+		Branch:            createInput.Branch,
+		BaseBranch:        createInput.BaseBranch,
+		ExecutionScope:    createInput.ExecutionScope,
+		RootSelector:      createInput.RootSelector,
+		PackageSelectors:  createInput.PackageSelectors,
+		PackageBaseBranch: createInput.PackageBaseBranch,
+		GenerateWorkspace: createInput.GenerateWorkspace,
+		Yes:               createInput.Yes,
+		NonInteractive:    createInput.NonInteractive,
 	})
 	if err != nil {
 		return err
@@ -139,17 +194,35 @@ func runCreate(args []string) error {
 
 	ui.RenderCreateDryPlan(plan)
 
-	confirmed, err := prompt.New().ConfirmWithToken(
-		"Dry plan ready.",
-		"APPLY",
-		*nonInteractive,
-		*yes && *nonInteractive,
-	)
-	if err != nil {
-		return err
-	}
-	if !confirmed {
-		return domain.NewError(domain.CategoryInput, 2, "Create cancelled before execution.", "Re-run and type APPLY at the final confirmation prompt.", nil)
+	if *nonInteractive {
+		confirmed, err := promptAdapter.ConfirmWithToken(
+			"Dry plan ready.",
+			"APPLY",
+			*nonInteractive,
+			*yes && *nonInteractive,
+		)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			return domain.NewError(domain.CategoryInput, 2, "Create cancelled before execution.", "Re-run and type APPLY at the final confirmation prompt.", nil)
+		}
+	} else if !wizardUsed {
+		confirmed, err := promptAdapter.ConfirmWithToken(
+			"Dry plan ready.",
+			"APPLY",
+			false,
+			false,
+		)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			return domain.NewError(domain.CategoryInput, 2, "Create cancelled before execution.", "Re-run and type APPLY at the final confirmation prompt.", nil)
+		}
+	} else if !applyAfterDryRun {
+		ui.RenderDryRunOnly()
+		return nil
 	}
 
 	result, err := service.Apply(plan)
@@ -160,6 +233,31 @@ func runCreate(args []string) error {
 	return nil
 }
 
+func runPubGet(args []string) error {
+	if len(args) < 1 {
+		return domain.NewError(domain.CategoryInput, 2, "Missing workspace name.", "Usage: flutree pubget <name> [--force]", nil)
+	}
+
+	name := args[0]
+	fs := flag.NewFlagSet("pubget", flag.ContinueOnError)
+	force := fs.Bool("force", false, "Clean cache and remove pubspec.lock before pub get.")
+	if err := fs.Parse(args[1:]); err != nil {
+		return domain.NewError(domain.CategoryInput, 2, "Invalid pubget arguments.", "", err)
+	}
+
+	service := app.NewPubGetService(registry.NewDefault(), &infraPub.Gateway{})
+	result, err := service.Run(domain.PubGetInput{
+		Name:  name,
+		Force: *force,
+	})
+	if err != nil {
+		return err
+	}
+
+	ui.RenderPubGetSuccess(result)
+	return nil
+}
+
 func printHelp() {
 	fmt.Println("flutree - Manage Git worktree lifecycle for Flutter-oriented flows.")
 	fmt.Println("")
@@ -167,6 +265,7 @@ func printHelp() {
 	fmt.Println("  flutree create <name> [options]")
 	fmt.Println("  flutree list [--all]")
 	fmt.Println("  flutree complete <name> [options]")
+	fmt.Println("  flutree pubget <name> [--force]")
 }
 
 type multiFlag []string
