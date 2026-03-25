@@ -1,18 +1,22 @@
 # flutree
 
+[![tests](https://github.com/EndersonPro/flutree/actions/workflows/tests.yml/badge.svg)](https://github.com/EndersonPro/flutree/actions/workflows/tests.yml)
+[![Release](https://img.shields.io/github/v/release/EndersonPro/flutree?color=green&style=flat-square)](https://github.com/EndersonPro/flutree/releases/latest)
+[![License](https://img.shields.io/github/license/EndersonPro/flutree?color=blue&style=flat-square)](LICENSE)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/EndersonPro/flutree?style=flat-square)](go.mod)
+[![Last Commit](https://img.shields.io/github/last-commit/EndersonPro/flutree?style=flat-square)](https://github.com/EndersonPro/flutree/commits/main)
+
 `flutree` is a Go CLI to manage Git worktrees for multi-package Flutter workflows.
 
-Current commands:
-- `create`: creates a managed worktree and stores metadata in a global registry.
-- `list`: lists managed worktrees (scoped to current repo when available, otherwise global registry scope).
-- `complete`: remove-only completion flow (removes worktree and keeps local branch).
+## 🚀 Features
 
-## Requirements
+- **Multi-package Management**: Handle complex Flutter monorepos with multiple packages efficiently
+- **Git Worktree Integration**: Seamless integration with Git's worktree functionality
+- **Parallel Operations**: Execute operations across multiple worktrees in parallel
+- **VSCode Workspace Generation**: Automatically generate workspace files for IDE integration
+- **Package Override Support**: Manage `pubspec_overrides.yaml` files for development workflows
 
-- Go `>=1.22` (for local build from source)
-- Git available in `PATH`
-
-## Installation
+## 📦 Installation
 
 ### Homebrew (macOS arm64)
 
@@ -35,26 +39,20 @@ go build -o flutree ./cmd/flutree
 ./flutree --help
 ```
 
-### Probar en local (paso a paso)
+## 🔧 Requirements
 
-```bash
-# 1) Compilar
-go build -o ./flutree ./cmd/flutree
+- Go `>=1.22` (for local build from source)
+- Git available in `PATH`
 
-# 2) Smoke test
-./flutree --help
-
-# 3) Ejecutar tests
-go test ./...
-```
-
-## Quickstart
+## 🛠️ Quickstart
 
 Run from inside a Git repository:
 
 ```bash
 flutree create feature-login --branch feature/login --root-repo repo --scope . --yes --non-interactive
 flutree list
+flutree pubget feature-login
+flutree pubget feature-login --force
 flutree complete feature-login --yes --force
 ```
 
@@ -65,6 +63,10 @@ Use `--yes` on `create` with `--non-interactive` to approve the dry plan in auto
 Default destination root is `~/Documents/worktrees`, generating:
 
 `~/Documents/worktrees/<worktree-name-slug>/`
+
+## ⚙️ Advanced Usage
+
+### Two-phase Flow
 
 `create` now runs a strict two-phase flow before mutation:
 - first, it renders a full dry plan preview (repos, branches, paths, commands, and output files);
@@ -78,6 +80,8 @@ Example with explicit package selectors and workspace output:
 ```bash
 flutree create feature-login --scope . --root-repo root-app --package core-pkg --package-base core-pkg=develop --yes --non-interactive
 ```
+
+### Workspace Control
 
 Disable workspace generation when needed:
 
@@ -93,13 +97,20 @@ VSCode workspace output is MVP-only and includes `folders` entries only.
 `settings`, `tasks`, and `launch` are intentionally not generated.
 Use `--no-workspace` to skip `.code-workspace` output entirely.
 
-## How to test
+## 📋 Commands
+
+- `create`: creates a managed worktree and stores metadata in a global registry.
+- `list`: lists managed worktrees (scoped to current repo when available, otherwise global registry scope).
+- `complete`: remove-only completion flow (removes worktree and keeps local branch).
+- `pubget`: runs `pub get` for all managed package repos in parallel, then runs root last.
+
+## 🧪 Testing
 
 ```bash
 go test ./...
 ```
 
-Ejemplo de prueba manual de flujo:
+Example of manual test flow:
 
 ```bash
 go build -o ./flutree ./cmd/flutree
@@ -108,7 +119,7 @@ go build -o ./flutree ./cmd/flutree
 ./flutree complete demo --yes --force
 ```
 
-## Non-interactive behavior
+## 🤖 Non-interactive behavior
 
 - `create` requires final confirmation in interactive mode.
 - `create --yes` is only auto-approval in `--non-interactive` mode.
@@ -117,7 +128,7 @@ go build -o ./flutree ./cmd/flutree
 - `complete` requires confirmation unless `--yes` is passed.
 - `complete --non-interactive` without `--yes` fails fast by design.
 
-## Registry
+## 🗂️ Registry
 
 Global registry file:
 
@@ -125,11 +136,7 @@ Global registry file:
 
 Writes are atomic and schema-validated.
 
-## Notes
-
-Homebrew artifacts are produced from the Go CLI binary at `./cmd/flutree`.
-
-## Project structure
+## 🏗️ Project structure
 
 ```text
 cmd/flutree/
@@ -147,3 +154,16 @@ docs/
 More details:
 - `docs/usage.md`
 - `docs/architecture.md`
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) for interactive UI
+- Inspired by the need to manage complex Flutter monorepo workflows
