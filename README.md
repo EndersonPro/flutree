@@ -1,6 +1,6 @@
-# flutree
+<p align="center"><img src="assets/flutree-icon.png" alt="flutree logo" width="300" /></p>
 
-![flutree logo](assets/flutree-icon.png)
+`flutree` is a Go CLI to manage Git worktrees for multi-package Flutter workflows.
 
 [![tests](https://github.com/EndersonPro/flutree/actions/workflows/tests.yml/badge.svg)](https://github.com/EndersonPro/flutree/actions/workflows/tests.yml)
 [![Release](https://img.shields.io/github/v/release/EndersonPro/flutree?color=green&style=flat-square)](https://github.com/EndersonPro/flutree/releases/latest)
@@ -8,7 +8,6 @@
 [![Go Version](https://img.shields.io/github/go-mod/go-version/EndersonPro/flutree?style=flat-square)](go.mod)
 [![Last Commit](https://img.shields.io/github/last-commit/EndersonPro/flutree?style=flat-square)](https://github.com/EndersonPro/flutree/commits/main)
 
-`flutree` is a Go CLI to manage Git worktrees for multi-package Flutter workflows.
 
 ## Table of Contents
 
