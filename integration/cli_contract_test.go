@@ -91,12 +91,37 @@ func initRepo(t *testing.T, path string) {
 	runGit(t, path, "add", "README.md", "pubspec.yaml")
 	runGit(t, path, "commit", "-m", "init")
 	runGit(t, path, "checkout", "-B", "main")
+	remote := filepath.Join(t.TempDir(), "origin.git")
+	runGit(t, filepath.Dir(remote), "init", "--bare", remote)
+	runGit(t, path, "remote", "add", "origin", remote)
+	runGit(t, path, "push", "-u", "origin", "main")
 }
 
 func testEnv(home string) []string {
 	env := os.Environ()
 	env = append(env, "HOME="+home)
 	return env
+}
+
+func testEnvWithPath(home, pathValue string) []string {
+	env := testEnv(home)
+	env = append(env, "PATH="+pathValue)
+	return env
+}
+
+func withPath(env []string, dir string) []string {
+	next := make([]string, 0, len(env)+1)
+	next = append(next, env...)
+	next = append(next, "PATH="+dir)
+	return next
+}
+
+func writeFakeBrew(t *testing.T, dir string, script string) {
+	t.Helper()
+	path := filepath.Join(dir, "brew")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func writeRegistry(t *testing.T, home string, payload any) {
@@ -173,6 +198,7 @@ func TestNonInteractiveCreateRequiresYes(t *testing.T) {
 	scope := filepath.Join(t.TempDir(), "workspace")
 	repo := filepath.Join(scope, "root-app")
 	initRepo(t, repo)
+	runGit(t, repo, "branch", "feature/login")
 
 	res := runCLI(
 		t, bin, repo, testEnv(home), "",
@@ -196,6 +222,7 @@ func TestInteractiveCreateWithYesStillRequiresToken(t *testing.T) {
 	scope := filepath.Join(t.TempDir(), "workspace")
 	repo := filepath.Join(scope, "root-app")
 	initRepo(t, repo)
+	runGit(t, repo, "branch", "feature/login")
 
 	res := runCLI(
 		t, bin, repo, testEnv(home), "NOPE\n",
@@ -210,6 +237,54 @@ func TestInteractiveCreateWithYesStillRequiresToken(t *testing.T) {
 	}
 	if !strings.Contains(res.stderr, "Create cancelled before execution") {
 		t.Fatalf("unexpected stderr: %s", res.stderr)
+	}
+}
+
+func TestNonInteractiveCreateRequiresExplicitReuseFlagWhenBranchExists(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	repo := filepath.Join(scope, "root-app")
+	initRepo(t, repo)
+	runGit(t, repo, "branch", "feature/login")
+
+	res := runCLI(
+		t, bin, repo, testEnv(home), "",
+		"create", "feature-login",
+		"--branch", "feature/login",
+		"--scope", scope,
+		"--root-repo", "root-app",
+		"--yes",
+		"--non-interactive",
+	)
+	if res.code != 2 {
+		t.Fatalf("expected 2, got %d (%s)", res.code, res.stderr)
+	}
+	if !strings.Contains(res.stderr, "Existing branch reuse requires explicit --reuse-existing-branch") {
+		t.Fatalf("unexpected stderr: %s", res.stderr)
+	}
+}
+
+func TestNonInteractiveCreateAllowsReuseWithExplicitFlag(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	repo := filepath.Join(scope, "root-app")
+	initRepo(t, repo)
+	runGit(t, repo, "branch", "feature/login")
+
+	res := runCLI(
+		t, bin, repo, testEnv(home), "",
+		"create", "feature-login",
+		"--branch", "feature/login",
+		"--scope", scope,
+		"--root-repo", "root-app",
+		"--yes",
+		"--non-interactive",
+		"--reuse-existing-branch",
+	)
+	if res.code != 0 {
+		t.Fatalf("expected 0, got %d (%s)", res.code, res.stderr)
 	}
 }
 
@@ -245,5 +320,166 @@ func TestCompleteWorksOutsideRepoAndRetainsBranch(t *testing.T) {
 	branches := runGit(t, repo, "branch", "--list", "feature/login")
 	if !strings.Contains(branches, "feature/login") {
 		t.Fatalf("expected branch retained, got: %s", branches)
+	}
+}
+
+func TestVersionCommandsPrintSameStableValue(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	flagVersion := runCLI(t, bin, projectRoot(t), testEnv(home), "", "--version")
+	if flagVersion.code != 0 {
+		t.Fatalf("expected 0 for --version, got %d (%s)", flagVersion.code, flagVersion.stderr)
+	}
+	cmdVersion := runCLI(t, bin, projectRoot(t), testEnv(home), "", "version")
+	if cmdVersion.code != 0 {
+		t.Fatalf("expected 0 for version, got %d (%s)", cmdVersion.code, cmdVersion.stderr)
+	}
+	if strings.TrimSpace(flagVersion.stdout) == "" {
+		t.Fatalf("expected non-empty version output")
+	}
+	if strings.TrimSpace(flagVersion.stdout) != strings.TrimSpace(cmdVersion.stdout) {
+		t.Fatalf("version output mismatch: --version=%q version=%q", flagVersion.stdout, cmdVersion.stdout)
+	}
+}
+
+func TestUpdateCheckFailsWhenBrewMissing(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	res := runCLI(t, bin, projectRoot(t), testEnvWithPath(home, ""), "", "update", "--check")
+	if res.code != 1 {
+		t.Fatalf("expected exit code 1, got %d (%s)", res.code, res.stderr)
+	}
+	if !strings.Contains(res.stderr, "Homebrew is required for automatic updates") {
+		t.Fatalf("unexpected stderr: %s", res.stderr)
+	}
+}
+
+func TestUpdateCommandsUseBrewCheckAndApplyContracts(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	fakeBin := t.TempDir()
+
+	brewScript := filepath.Join(fakeBin, "brew")
+	brewBody := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"outdated\" ]; then\n" +
+		"  echo '{\"formulae\":[{\"name\":\"flutree\",\"installed_versions\":[\"0.7.0\"],\"current_version\":\"0.8.0\"}]}'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = \"update\" ]; then\n" +
+		"  echo 'updated'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = \"upgrade\" ]; then\n" +
+		"  echo 'upgraded flutree'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = \"list\" ]; then\n" +
+		"  echo 'flutree 0.7.0'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 0\n"
+	if err := os.WriteFile(brewScript, []byte(brewBody), 0o755); err != nil {
+		t.Fatalf("failed to write fake brew script: %v", err)
+	}
+
+	env := testEnvWithPath(home, fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	check := runCLI(t, bin, projectRoot(t), env, "", "update", "--check")
+	if check.code != 0 {
+		t.Fatalf("expected update --check success, got %d (%s)", check.code, check.stderr)
+	}
+	if !strings.Contains(check.stdout, "mode=check") || !strings.Contains(check.stdout, "outdated=true") {
+		t.Fatalf("unexpected check output: %s", check.stdout)
+	}
+
+	apply := runCLI(t, bin, projectRoot(t), env, "", "update")
+	if apply.code != 0 {
+		t.Fatalf("expected update apply success, got %d (%s)", apply.code, apply.stderr)
+	}
+	if !strings.Contains(apply.stdout, "mode=apply") || !strings.Contains(apply.stdout, "outdated=true") {
+		t.Fatalf("unexpected apply output: %s", apply.stdout)
+	}
+}
+
+func TestVersionCommandAndFlagReturnStableOutput(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	env := testEnv(home)
+
+	byCommand := runCLI(t, bin, projectRoot(t), env, "", "version")
+	if byCommand.code != 0 {
+		t.Fatalf("expected 0, got %d (%s)", byCommand.code, byCommand.stderr)
+	}
+	byFlag := runCLI(t, bin, projectRoot(t), env, "", "--version")
+	if byFlag.code != 0 {
+		t.Fatalf("expected 0, got %d (%s)", byFlag.code, byFlag.stderr)
+	}
+	if strings.TrimSpace(byCommand.stdout) != strings.TrimSpace(byFlag.stdout) {
+		t.Fatalf("version outputs mismatch. version=%q flag=%q", byCommand.stdout, byFlag.stdout)
+	}
+}
+
+func TestUpdateCheckAndApplyContractsWithBrewScript(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	brewBin := t.TempDir()
+	writeFakeBrew(t, brewBin, `#!/bin/sh
+set -eu
+cmd="$1"
+shift
+case "$cmd" in
+  outdated)
+    if [ "${BREW_SCENARIO:-up_to_date}" = "outdated" ]; then
+      printf '{"formulae":[{"name":"flutree","installed_versions":["1.0.0"],"current_version":"1.0.0","version":"1.1.0"}]}'
+    else
+      printf '{}'
+    fi
+    ;;
+  list)
+    printf 'flutree 1.0.0\n'
+    ;;
+  update)
+    printf 'updated\n'
+    ;;
+  upgrade)
+    printf 'upgraded flutree\n'
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+`)
+	env := withPath(testEnv(home), brewBin)
+
+	check := runCLI(t, bin, projectRoot(t), env, "", "update", "--check")
+	if check.code != 0 {
+		t.Fatalf("expected 0, got %d (%s)", check.code, check.stderr)
+	}
+	if !strings.Contains(check.stdout, "mode=check outdated=false") {
+		t.Fatalf("unexpected check output: %s", check.stdout)
+	}
+
+	outdatedEnv := append(env, "BREW_SCENARIO=outdated")
+	apply := runCLI(t, bin, projectRoot(t), outdatedEnv, "", "update")
+	if apply.code != 0 {
+		t.Fatalf("expected 0, got %d (%s)", apply.code, apply.stderr)
+	}
+	if !strings.Contains(apply.stdout, "mode=apply outdated=true") {
+		t.Fatalf("unexpected apply output: %s", apply.stdout)
+	}
+}
+
+func TestUpdateFailsWhenBrewUnavailable(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	env := withPath(testEnv(home), t.TempDir())
+
+	res := runCLI(t, bin, projectRoot(t), env, "", "update", "--check")
+	if res.code != 1 {
+		t.Fatalf("expected 1, got %d (%s)", res.code, res.stderr)
+	}
+	if !strings.Contains(res.stderr, "Homebrew is required for automatic updates") {
+		t.Fatalf("unexpected stderr: %s", res.stderr)
 	}
 }

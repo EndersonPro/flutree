@@ -21,6 +21,12 @@ func (f *fakeGit) ListWorktrees(repoRoot string) ([]domain.GitWorktreeEntry, err
 	return f.worktrees[filepath.Clean(repoRoot)], nil
 }
 func (f *fakeGit) CreateWorktree(string, string, string, string) error { return nil }
+func (f *fakeGit) CreateWorktreeNew(string, string, string, string) error {
+	return nil
+}
+func (f *fakeGit) CreateWorktreeExisting(string, string, string) error { return nil }
+func (f *fakeGit) BranchExists(string, string) (bool, error)           { return false, nil }
+func (f *fakeGit) SyncBaseBranch(string, string) (string, error)       { return "origin/main", nil }
 func (f *fakeGit) RemoveWorktree(repoRoot, path string, force bool) error {
 	f.removed = append(f.removed, repoRoot+"::"+path)
 	return nil
@@ -119,6 +125,9 @@ func TestCompleteUsesRecordRepoRootAndKeepsBranch(t *testing.T) {
 
 func TestCompleteRootAlsoCompletesAssociatedPackages(t *testing.T) {
 	container, rootPath, packagePath := managedPaths(t, "demo")
+	if err := os.MkdirAll(rootPath, 0o755); err != nil {
+		t.Fatalf("failed to create root path: %v", err)
+	}
 	if err := os.MkdirAll(packagePath, 0o755); err != nil {
 		t.Fatalf("failed to create package path: %v", err)
 	}
@@ -188,6 +197,53 @@ func TestCompletePackageOnlyCompletesSelectedPackage(t *testing.T) {
 	}
 }
 
+func TestCompleteMissingPathCleansStaleRegistryEntry(t *testing.T) {
+	_, rootPath, _ := managedPaths(t, "stale")
+
+	g := &fakeGit{}
+	r := &fakeRegistry{records: []domain.RegistryRecord{{
+		Name: "stale", Branch: "feature/stale", Path: rootPath, RepoRoot: "/tmp/repo", Status: "active",
+	}}}
+	p := &fakePrompt{ok: true}
+
+	s := NewCompleteService(g, r, p)
+	result, err := s.Run(domain.CompleteInput{Name: "stale", Yes: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.StaleCleaned {
+		t.Fatalf("expected stale cleanup result")
+	}
+	if len(g.removed) != 0 {
+		t.Fatalf("expected no git remove call for missing path, got %v", g.removed)
+	}
+	if len(r.completed) != 1 || r.completed[0] != "stale" {
+		t.Fatalf("expected stale record completion, got %v", r.completed)
+	}
+}
+
+func TestCompleteExistingPathDoesNotMarkStaleCleanup(t *testing.T) {
+	_, rootPath, _ := managedPaths(t, "fresh")
+	if err := os.MkdirAll(rootPath, 0o755); err != nil {
+		t.Fatalf("failed to create root path: %v", err)
+	}
+
+	g := &fakeGit{}
+	r := &fakeRegistry{records: []domain.RegistryRecord{{
+		Name: "fresh", Branch: "feature/fresh", Path: rootPath, RepoRoot: "/tmp/repo", Status: "active",
+	}}}
+	p := &fakePrompt{ok: true}
+
+	s := NewCompleteService(g, r, p)
+	result, err := s.Run(domain.CompleteInput{Name: "fresh", Yes: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.StaleCleaned {
+		t.Fatalf("did not expect stale cleanup for existing path")
+	}
+}
+
 func TestCompleteRootRefusesContainerOutsideManagedScope(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -228,6 +284,55 @@ func TestCompleteRootRefusesUnexpectedRootPathLayout(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Cannot determine worktree container") {
 		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestCompleteMarksMissingPathAsStaleCleanup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	missing := filepath.Join(destinationRoot(), "demo", "root", "root-app")
+	g := &fakeGit{}
+	r := &fakeRegistry{records: []domain.RegistryRecord{{
+		Name: "demo", Branch: "feature/demo", Path: missing, RepoRoot: "/tmp/repo", Status: "active",
+	}}}
+	p := &fakePrompt{ok: true}
+
+	s := NewCompleteService(g, r, p)
+	result, err := s.Run(domain.CompleteInput{Name: "demo", Yes: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.StaleCleaned {
+		t.Fatalf("expected stale cleanup marker")
+	}
+	if len(g.removed) != 0 {
+		t.Fatalf("expected no git removal for missing path, got %v", g.removed)
+	}
+	if len(r.completed) != 1 || r.completed[0] != "demo" {
+		t.Fatalf("expected registry completion for stale entry, got %v", r.completed)
+	}
+}
+
+func TestCompleteExistingPathDoesNotSetStaleCleanup(t *testing.T) {
+	_, rootPath, _ := managedPaths(t, "demo-no-stale")
+	if err := os.MkdirAll(rootPath, 0o755); err != nil {
+		t.Fatalf("failed to create root path: %v", err)
+	}
+
+	g := &fakeGit{}
+	r := &fakeRegistry{records: []domain.RegistryRecord{{
+		Name: "demo-no-stale", Branch: "feature/demo-no-stale", Path: rootPath, RepoRoot: "/tmp/repo", Status: "active",
+	}}}
+	p := &fakePrompt{ok: true}
+
+	s := NewCompleteService(g, r, p)
+	result, err := s.Run(domain.CompleteInput{Name: "demo-no-stale", Yes: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.StaleCleaned {
+		t.Fatalf("did not expect stale cleanup marker")
 	}
 }
 

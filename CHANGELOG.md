@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0] - 2026-03-25
+
+### Added
+- Stable CLI version surface with both `flutree --version` and `flutree version`.
+- Brew-only auto-update commands: `flutree update --check`, `flutree update --apply`, and `flutree update` (default apply path), including machine-parseable output.
+- Update service and Homebrew gateway with test coverage for check/apply and unavailable-brew failure paths.
+
+### Changed
+- `create` now requires explicit confirmation before reusing an existing branch; non-interactive mode requires `--reuse-existing-branch`.
+- New-branch creation now syncs the configured base branch before creating worktrees and blocks creation if sync fails.
+- Package branch derivation now preserves the exact explicit/default root branch token deterministically.
+- Documentation now includes the version/update command contract, update mode behavior, and brew-only scope.
+
+### Fixed
+- `complete` now treats missing worktree paths as stale registry drift, performs cleanup, and returns success.
+- Integration fixtures now provision a local origin in test repositories so base-branch sync checks run consistently.
+
 ## [0.8.0] - 2026-03-25
 
 ### Added

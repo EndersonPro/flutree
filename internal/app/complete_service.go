@@ -35,8 +35,16 @@ func (s *CompleteService) Run(input domain.CompleteInput) (domain.CompleteResult
 	}
 
 	targets := associatedCompletionTargets(rec, records)
+	missingPathDetected := false
 
 	for _, target := range targets {
+		if _, statErr := os.Stat(target.Path); statErr != nil {
+			if os.IsNotExist(statErr) {
+				missingPathDetected = true
+				continue
+			}
+			return domain.CompleteResult{}, domain.NewError(domain.CategoryPersistence, 1, "Failed to inspect worktree path during completion.", target.Path, statErr)
+		}
 		dirty, err := s.git.IsDirty(target.Path)
 		if err != nil {
 			return domain.CompleteResult{}, err
@@ -69,6 +77,12 @@ func (s *CompleteService) Run(input domain.CompleteInput) (domain.CompleteResult
 	}
 
 	for _, target := range targets {
+		if _, statErr := os.Stat(target.Path); statErr != nil {
+			if os.IsNotExist(statErr) {
+				continue
+			}
+			return domain.CompleteResult{}, domain.NewError(domain.CategoryPersistence, 1, "Failed to inspect worktree path during removal.", target.Path, statErr)
+		}
 		if err := s.git.RemoveWorktree(target.RepoRoot, target.Path, input.Force); err != nil {
 			return domain.CompleteResult{}, err
 		}
@@ -96,6 +110,7 @@ func (s *CompleteService) Run(input domain.CompleteInput) (domain.CompleteResult
 		Record:        rec,
 		RemovedBranch: false,
 		NextStep:      "",
+		StaleCleaned:  missingPathDetected,
 	}, nil
 }
 

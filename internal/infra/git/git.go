@@ -40,6 +40,50 @@ func (g *Gateway) CreateWorktree(repoRoot, path, branch, baseBranch string) erro
 	return err
 }
 
+func (g *Gateway) CreateWorktreeNew(repoRoot, path, branch, startPoint string) error {
+	_, err := g.run(repoRoot, "worktree", "add", "-b", branch, path, startPoint)
+	return err
+}
+
+func (g *Gateway) CreateWorktreeExisting(repoRoot, path, branch string) error {
+	_, err := g.run(repoRoot, "worktree", "add", path, branch)
+	return err
+}
+
+func (g *Gateway) BranchExists(repoRoot, branch string) (bool, error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return false, domain.NewError(domain.CategoryInput, 2, "Target branch cannot be empty.", "Pass --branch or rely on the default branch contract.", nil)
+	}
+
+	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	cmd.Dir = repoRoot
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, domain.NewError(domain.CategoryGit, 1, "Failed to check local branch existence.", "Branch: "+branch, err)
+}
+
+func (g *Gateway) SyncBaseBranch(repoRoot, baseBranch string) (string, error) {
+	baseBranch = strings.TrimSpace(baseBranch)
+	if baseBranch == "" {
+		baseBranch = "main"
+	}
+	if _, err := g.run(repoRoot, "fetch", "--prune", "origin", baseBranch); err != nil {
+		return "", domain.NewError(domain.CategoryGit, 1, "Failed to sync base branch from origin before creating worktree.", "Base branch: "+baseBranch, err)
+	}
+	startPoint := "origin/" + baseBranch
+	if _, err := g.run(repoRoot, "rev-parse", "--verify", "--quiet", "refs/remotes/"+startPoint); err != nil {
+		return "", domain.NewError(domain.CategoryGit, 1, "Synced base branch reference was not found after fetch.", "Expected remote ref: "+startPoint, err)
+	}
+	return startPoint, nil
+}
+
 func (g *Gateway) RemoveWorktree(repoRoot, path string, force bool) error {
 	args := []string{"worktree", "remove", path}
 	if force {

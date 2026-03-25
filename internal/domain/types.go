@@ -77,6 +77,7 @@ type CompleteResult struct {
 	Record        RegistryRecord
 	RemovedBranch bool
 	NextStep      string
+	StaleCleaned  bool
 }
 
 type PubTool string
@@ -137,11 +138,29 @@ type CreateDryPlan struct {
 	WorkspaceFolders []string
 }
 
+type CreateApplyOptions struct {
+	NonInteractive      bool
+	ReuseExistingBranch bool
+}
+
 type CreateResult struct {
 	Record           RegistryRecord
 	NextStep         string
 	SelectedPackages []string
 	WorkspacePath    string
+}
+
+type UpdateInput struct {
+	Check bool
+	Apply bool
+}
+
+type UpdateResult struct {
+	Mode         string
+	Outdated     bool
+	Current      string
+	Latest       string
+	UpgradeNotes string
 }
 
 func NormalizePath(path string) string {

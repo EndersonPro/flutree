@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/EndersonPro/flutree/internal/app"
@@ -12,9 +13,14 @@ import (
 	"github.com/EndersonPro/flutree/internal/infra/prompt"
 	infraPub "github.com/EndersonPro/flutree/internal/infra/pub"
 	"github.com/EndersonPro/flutree/internal/infra/registry"
+	infraUpdate "github.com/EndersonPro/flutree/internal/infra/update"
 	"github.com/EndersonPro/flutree/internal/runtime"
 	"github.com/EndersonPro/flutree/internal/ui"
 )
+
+var version = "0.9.0"
+
+var branchNameSanitizer = regexp.MustCompile(`[^a-z0-9]+`)
 
 func main() {
 	if len(os.Args) == 1 {
@@ -32,6 +38,10 @@ func main() {
 		runtime.ExitOnError(runComplete(os.Args[2:]))
 	case "pubget":
 		runtime.ExitOnError(runPubGet(os.Args[2:]))
+	case "update":
+		runtime.ExitOnError(runUpdate(os.Args[2:]))
+	case "version", "--version":
+		runtime.ExitOnError(runVersion(os.Args[2:]))
 	case "--help", "-h", "help":
 		printHelp()
 	default:
@@ -94,6 +104,7 @@ func runCreate(args []string) error {
 	noWorkspace := fs.Bool("no-workspace", false, "Disable VSCode workspace generation.")
 	yes := fs.Bool("yes", false, "Acknowledge dry plan automatically in non-interactive mode.")
 	nonInteractive := fs.Bool("non-interactive", false, "Disable prompts.")
+	reuseExistingBranch := fs.Bool("reuse-existing-branch", false, "Allow non-interactive reuse when target branch already exists.")
 
 	var packages multiFlag
 	var packageBase multiFlag
@@ -109,7 +120,7 @@ func runCreate(args []string) error {
 
 	branchName := *branch
 	if strings.TrimSpace(branchName) == "" {
-		branchName = "feature/" + strings.ToLower(strings.ReplaceAll(strings.TrimSpace(name), " ", "-"))
+		branchName = defaultBranchForName(name)
 	}
 
 	baseMap := map[string]string{}
@@ -225,7 +236,10 @@ func runCreate(args []string) error {
 		return nil
 	}
 
-	result, err := service.Apply(plan)
+	result, err := service.Apply(plan, domain.CreateApplyOptions{
+		NonInteractive:      createInput.NonInteractive,
+		ReuseExistingBranch: *reuseExistingBranch,
+	})
 	if err != nil {
 		return err
 	}
@@ -258,14 +272,58 @@ func runPubGet(args []string) error {
 	return nil
 }
 
+func runVersion(args []string) error {
+	if len(args) != 0 {
+		return domain.NewError(domain.CategoryInput, 2, "Version command does not accept arguments.", "Use 'flutree version' or 'flutree --version'.", nil)
+	}
+	v := strings.TrimSpace(version)
+	if v == "" {
+		v = "dev"
+	}
+	fmt.Println(v)
+	return nil
+}
+
+func runUpdate(args []string) error {
+	fs := flag.NewFlagSet("update", flag.ContinueOnError)
+	check := fs.Bool("check", false, "Check whether a brew update is available.")
+	apply := fs.Bool("apply", false, "Apply brew update now.")
+	if err := fs.Parse(args); err != nil {
+		return domain.NewError(domain.CategoryInput, 2, "Invalid update arguments.", "Usage: flutree update [--check|--apply]", err)
+	}
+	if fs.NArg() > 0 {
+		return domain.NewError(domain.CategoryInput, 2, "Update command does not accept positional arguments.", "Usage: flutree update [--check|--apply]", nil)
+	}
+
+	service := app.NewUpdateService(&infraUpdate.BrewGateway{})
+	result, err := service.Run(domain.UpdateInput{Check: *check, Apply: *apply})
+	if err != nil {
+		return err
+	}
+
+	if result.Mode == "check" {
+		fmt.Printf("mode=check outdated=%t current=%s latest=%s\n", result.Outdated, safeVersion(result.Current), safeVersion(result.Latest))
+		return nil
+	}
+
+	fmt.Printf("mode=apply outdated=%t current=%s latest=%s\n", result.Outdated, safeVersion(result.Current), safeVersion(result.Latest))
+	if strings.TrimSpace(result.UpgradeNotes) != "" {
+		fmt.Println(result.UpgradeNotes)
+	}
+	return nil
+}
+
 func printHelp() {
 	fmt.Println("flutree - Manage Git worktree lifecycle for Flutter-oriented flows.")
 	fmt.Println("")
 	fmt.Println("Usage:")
+	fmt.Println("  flutree --version")
+	fmt.Println("  flutree version")
 	fmt.Println("  flutree create <name> [options]")
 	fmt.Println("  flutree list [--all]")
 	fmt.Println("  flutree complete <name> [options]")
 	fmt.Println("  flutree pubget <name> [--force]")
+	fmt.Println("  flutree update [--check|--apply]")
 }
 
 type multiFlag []string
@@ -274,4 +332,22 @@ func (m *multiFlag) String() string { return strings.Join(*m, ",") }
 func (m *multiFlag) Set(v string) error {
 	*m = append(*m, v)
 	return nil
+}
+
+func defaultBranchForName(name string) string {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	normalized = branchNameSanitizer.ReplaceAllString(normalized, "-")
+	normalized = strings.Trim(normalized, "-")
+	if normalized == "" {
+		normalized = "workspace"
+	}
+	return "feature/" + normalized
+}
+
+func safeVersion(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "unknown"
+	}
+	return trimmed
 }

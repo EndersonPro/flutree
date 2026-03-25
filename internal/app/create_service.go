@@ -25,7 +25,11 @@ func NewCreateService(git GitPort, registry RegistryPort, prompt PromptPort) *Cr
 
 func (s *CreateService) BuildDryPlan(input domain.CreateInput) (domain.CreateDryPlan, error) {
 	normalizedName := normalizeWorktreeName(input.Name)
-	rootBranch := normalizeBranchName(input.Branch)
+	rootBranchInput := strings.TrimSpace(input.Branch)
+	if rootBranchInput == "" {
+		rootBranchInput = defaultBranchFor(normalizedName)
+	}
+	rootBranch := normalizeBranchName(rootBranchInput)
 	baseBranch := normalizeBranchName(input.BaseBranch)
 
 	repos, err := s.git.DiscoverFlutterRepos(input.ExecutionScope)
@@ -63,7 +67,7 @@ func (s *CreateService) BuildDryPlan(input domain.CreateInput) (domain.CreateDry
 
 	packagePlans := make([]domain.PlannedWorktree, 0, len(packages))
 	for _, pkg := range packages {
-		branch := normalizeBranchName("feature/" + normalizedName + "-" + pkg.Name)
+		branch := rootBranch
 		pkgBase, ok := input.PackageBaseBranch[pkg.Name]
 		if !ok {
 			pkgBase, ok = input.PackageBaseBranch[pkg.RepoRoot]
@@ -110,7 +114,7 @@ func (s *CreateService) BuildDryPlan(input domain.CreateInput) (domain.CreateDry
 	}, nil
 }
 
-func (s *CreateService) Apply(plan domain.CreateDryPlan) (domain.CreateResult, error) {
+func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateApplyOptions) (domain.CreateResult, error) {
 	records, err := s.registry.ListRecords()
 	if err != nil {
 		return domain.CreateResult{}, err
@@ -140,7 +144,7 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan) (domain.CreateResult, e
 	if err := os.MkdirAll(filepath.Dir(plan.Root.Path), 0o755); err != nil {
 		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to create root worktree directory.", plan.Root.Path, err)
 	}
-	if err := s.git.CreateWorktree(plan.Root.Repo.RepoRoot, plan.Root.Path, plan.Root.Branch, plan.Root.BaseBranch); err != nil {
+	if err := s.createPlannedWorktree(plan.Root, options); err != nil {
 		return domain.CreateResult{}, err
 	}
 	created = append(created, plan.Root)
@@ -150,7 +154,7 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan) (domain.CreateResult, e
 			rollback()
 			return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to create package worktree directory.", pkg.Path, err)
 		}
-		if err := s.git.CreateWorktree(pkg.Repo.RepoRoot, pkg.Path, pkg.Branch, pkg.BaseBranch); err != nil {
+		if err := s.createPlannedWorktree(pkg, options); err != nil {
 			rollback()
 			return domain.CreateResult{}, err
 		}
@@ -212,6 +216,56 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan) (domain.CreateResult, e
 		SelectedPackages: selected,
 		WorkspacePath:    plan.WorkspacePath,
 	}, nil
+}
+
+func (s *CreateService) createPlannedWorktree(target domain.PlannedWorktree, options domain.CreateApplyOptions) error {
+	exists, err := s.git.BranchExists(target.Repo.RepoRoot, target.Branch)
+	if err != nil {
+		return err
+	}
+
+	if exists {
+		if options.NonInteractive {
+			if !options.ReuseExistingBranch {
+				return domain.NewError(
+					domain.CategoryInput,
+					2,
+					"Existing branch reuse requires explicit --reuse-existing-branch in non-interactive mode.",
+					"Branch '"+target.Branch+"' already exists. Re-run with --reuse-existing-branch to reuse it safely.",
+					nil,
+				)
+			}
+		} else {
+			confirmMessage := "Branch '" + target.Branch + "' already exists for repo '" + target.Repo.Name + "'. Reuse it for this worktree?"
+			confirmed, confirmErr := s.prompt.Confirm(confirmMessage, false, false)
+			if confirmErr != nil {
+				return confirmErr
+			}
+			if !confirmed {
+				return domain.NewError(
+					domain.CategoryInput,
+					2,
+					"Create cancelled by user while confirming branch reuse.",
+					"Choose another branch or confirm reuse to continue.",
+					nil,
+				)
+			}
+		}
+
+		if err := s.git.CreateWorktreeExisting(target.Repo.RepoRoot, target.Path, target.Branch); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	startPoint, err := s.git.SyncBaseBranch(target.Repo.RepoRoot, target.BaseBranch)
+	if err != nil {
+		return err
+	}
+	if err := s.git.CreateWorktreeNew(target.Repo.RepoRoot, target.Path, target.Branch, startPoint); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *CreateService) resolveRootRepo(repos []domain.DiscoveredFlutterRepo, selector string, nonInteractive bool) (domain.DiscoveredFlutterRepo, error) {

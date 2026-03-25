@@ -59,6 +59,9 @@ func RenderCompleteSuccess(result domain.CompleteResult) {
 	fmt.Println(outputHeaderStyle.Render("Worktree Completed"))
 	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("Name: %s", result.Record.Name)))
 	fmt.Println(outputBodyStyle.Render("Worktree: removed"))
+	if result.StaleCleaned {
+		fmt.Println(outputBodyStyle.Render("Registry: stale entry cleaned (missing path)"))
+	}
 	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("Branch: %s (retained)", result.Record.Branch)))
 }
 
