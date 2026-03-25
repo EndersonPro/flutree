@@ -291,6 +291,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) for interactive UI
 - Inspired by the need to manage complex Flutter monorepo workflows
 
-## 🖼️ Logo Usage
-
-The flutree logo in `assets/flutree-icon.png` can be used for social media previews and Open Graph metadata. Note that GitHub repository icons cannot be set via code - you must configure the repository icon manually in the GitHub repository settings.
