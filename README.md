@@ -252,10 +252,11 @@ flutree version
 
 Single source of truth policy:
 
-- `VERSION` in the repository root is the only canonical release version.
+- Release Please is the canonical source for release versioning.
+- `VERSION` is auto-managed by the release PR and mirrors release-please version output.
 - Packaging injects this value into CLI output (`flutree --version`).
 - Release gate enforces `tag == VERSION == flutree --version`.
-- Release Please is the default tag generation flow on merges to `main`.
+- `.release-please-manifest.json` and `VERSION` are expected to stay aligned.
 
 Brew-only update flow:
 

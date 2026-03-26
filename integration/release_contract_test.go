@@ -1,6 +1,7 @@
 package integration_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,6 +113,36 @@ func TestVersionContractScriptsAndReleasePleaseConfigExist(t *testing.T) {
 		if _, err := os.Stat(file); err != nil {
 			t.Fatalf("required file missing: %s (%v)", file, err)
 		}
+	}
+
+	configPath := filepath.Join(root, "release-please-config.json")
+	configContent, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var config struct {
+		Packages map[string]struct {
+			ReleaseType string `json:"release-type"`
+			VersionFile string `json:"version-file"`
+		} `json:"packages"`
+	}
+
+	if err := json.Unmarshal(configContent, &config); err != nil {
+		t.Fatalf("invalid release-please config: %v", err)
+	}
+
+	rootPackage, ok := config.Packages["."]
+	if !ok {
+		t.Fatalf("release-please config missing root package entry")
+	}
+
+	if rootPackage.ReleaseType != "simple" {
+		t.Fatalf("expected root release-type=simple, got %q", rootPackage.ReleaseType)
+	}
+
+	if rootPackage.VersionFile != "VERSION" {
+		t.Fatalf("expected root version-file=VERSION, got %q", rootPackage.VersionFile)
 	}
 }
 
