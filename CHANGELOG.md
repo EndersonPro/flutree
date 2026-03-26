@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.0](https://github.com/EndersonPro/flutree/compare/v0.11.0...v0.12.0) (2026-03-26)
+
+
+### Features
+
+* add explicit root-only create and global list scopes ([6a50f67](https://github.com/EndersonPro/flutree/commit/6a50f679b8400d1501ec376fca5dcbe5092042da))
+* flutree go-only baseline v0.7.0 ([6109569](https://github.com/EndersonPro/flutree/commit/6109569e7b17e323cdd0a28376e928672400fe76))
+* harden worktree lifecycle and add CLI version/update contracts ([c8dce36](https://github.com/EndersonPro/flutree/commit/c8dce36b832fc15c45eada4c33dfe7433e40336c))
+* refine create flow and document recent CLI updates ([5e13925](https://github.com/EndersonPro/flutree/commit/5e13925852ab1ea96e9d6b000e04e9d83934323f))
+* release v0.8.0 with interactive workflows and pubget ([0eb1b31](https://github.com/EndersonPro/flutree/commit/0eb1b3139abb60f8f31f80ff1694fb426a6669ee))
+
 ## [0.11.0](https://github.com/EndersonPro/flutree/compare/v0.10.0...v0.11.0) (2026-03-26)
 
 
