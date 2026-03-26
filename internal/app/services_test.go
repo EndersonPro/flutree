@@ -26,6 +26,7 @@ func (f *fakeGit) CreateWorktreeNew(string, string, string, string) error {
 }
 func (f *fakeGit) CreateWorktreeExisting(string, string, string) error { return nil }
 func (f *fakeGit) BranchExists(string, string) (bool, error)           { return false, nil }
+func (f *fakeGit) SyncBranchWithRemote(string, string) error           { return nil }
 func (f *fakeGit) SyncBaseBranch(string, string) (string, error)       { return "origin/main", nil }
 func (f *fakeGit) RemoveWorktree(repoRoot, path string, force bool) error {
 	f.removed = append(f.removed, repoRoot+"::"+path)

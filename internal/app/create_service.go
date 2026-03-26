@@ -107,6 +107,7 @@ func (s *CreateService) BuildDryPlan(input domain.CreateInput) (domain.CreateDry
 		ContainerPath:    container,
 		Root:             rootPlan,
 		Packages:         packagePlans,
+		RootFiles:        mergeRootFilePatterns(input.RootFiles),
 		OverridePath:     overridePath,
 		OverrideContent:  overrideContent,
 		WorkspacePath:    workspacePath,
@@ -147,6 +148,10 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 	if err := s.createPlannedWorktree(plan.Root, options); err != nil {
 		return domain.CreateResult{}, err
 	}
+	if err := copyRootFiles(plan.Root.Repo.RepoRoot, plan.Root.Path, plan.RootFiles); err != nil {
+		rollback()
+		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to copy root files into root worktree.", plan.Root.Path, err)
+	}
 	created = append(created, plan.Root)
 
 	for _, pkg := range plan.Packages {
@@ -157,6 +162,10 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 		if err := s.createPlannedWorktree(pkg, options); err != nil {
 			rollback()
 			return domain.CreateResult{}, err
+		}
+		if err := copyRootFiles(pkg.Repo.RepoRoot, pkg.Path, plan.RootFiles); err != nil {
+			rollback()
+			return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to copy root files into package worktree.", pkg.Path, err)
 		}
 		created = append(created, pkg)
 	}
@@ -252,15 +261,24 @@ func (s *CreateService) createPlannedWorktree(target domain.PlannedWorktree, opt
 			}
 		}
 
+		if options.SyncWithRemote {
+			if err := s.git.SyncBranchWithRemote(target.Repo.RepoRoot, target.Branch); err != nil {
+				return err
+			}
+		}
+
 		if err := s.git.CreateWorktreeExisting(target.Repo.RepoRoot, target.Path, target.Branch); err != nil {
 			return err
 		}
 		return nil
 	}
 
-	startPoint, err := s.git.SyncBaseBranch(target.Repo.RepoRoot, target.BaseBranch)
-	if err != nil {
-		return err
+	startPoint := target.BaseBranch
+	if options.SyncWithRemote {
+		startPoint, err = s.git.SyncBaseBranch(target.Repo.RepoRoot, target.BaseBranch)
+		if err != nil {
+			return err
+		}
 	}
 	if err := s.git.CreateWorktreeNew(target.Repo.RepoRoot, target.Path, target.Branch, startPoint); err != nil {
 		return err
@@ -304,34 +322,37 @@ func (s *CreateService) resolvePackageRepos(repos []domain.DiscoveredFlutterRepo
 		return []domain.DiscoveredFlutterRepo{}, nil
 	}
 
-	if len(selectors) > 0 {
+	if len(selectors) == 0 {
+		if nonInteractive {
+			return []domain.DiscoveredFlutterRepo{}, nil
+		}
+		choices := []string{}
+		for _, c := range candidates {
+			choices = append(choices, repoLabel(c))
+		}
+		selectedChoices, err := s.prompt.SelectPackages("Select package repositories", choices, false)
+		if err != nil {
+			return nil, err
+		}
 		selected := []domain.DiscoveredFlutterRepo{}
-		for _, selector := range selectors {
-			repo, ok := findRepoBySelector(candidates, selector)
-			if !ok {
-				return nil, domain.NewError(domain.CategoryInput, 2, "Unknown package selector: "+selector+".", "Use --package with discovered repository name or path.", nil)
+		for _, ch := range selectedChoices {
+			for _, c := range candidates {
+				if repoLabel(c) == ch {
+					selected = append(selected, c)
+					break
+				}
 			}
-			selected = append(selected, repo)
 		}
 		return dedupRepos(selected), nil
 	}
 
-	choices := []string{}
-	for _, c := range candidates {
-		choices = append(choices, repoLabel(c))
-	}
-	selectedChoices, err := s.prompt.SelectPackages("Select package repositories", choices, nonInteractive)
-	if err != nil {
-		return nil, err
-	}
 	selected := []domain.DiscoveredFlutterRepo{}
-	for _, ch := range selectedChoices {
-		for _, c := range candidates {
-			if repoLabel(c) == ch {
-				selected = append(selected, c)
-				break
-			}
+	for _, selector := range selectors {
+		repo, ok := findRepoBySelector(candidates, selector)
+		if !ok {
+			return nil, domain.NewError(domain.CategoryInput, 2, "Unknown package selector: "+selector+".", "Use --package with discovered repository name or path.", nil)
 		}
+		selected = append(selected, repo)
 	}
 	return dedupRepos(selected), nil
 }

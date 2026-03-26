@@ -77,6 +77,14 @@ func RenderPubGetSuccess(result domain.PubGetResult) {
 	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("root    | %s | tool=%s | %s", result.Root.Name, result.Root.Tool, result.Root.Path)))
 }
 
+func RenderAddRepoSuccess(result domain.AddRepoResult) {
+	fmt.Println(outputHeaderStyle.Render("Repository Attached"))
+	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("Workspace: %s", result.WorkspaceName)))
+	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("Branch: %s", result.SelectedBranch)))
+	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("Added repos: %s", strings.Join(result.AddedRepos, ", "))))
+	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("Override updated: %s", result.OverridePath)))
+}
+
 func RenderList(rows []domain.ListRow, includeUnmanaged bool) {
 	if len(rows) == 0 {
 		next := "Run `flutree create <name> --branch <branch>` to start one."

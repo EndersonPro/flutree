@@ -9,6 +9,7 @@ type GitPort interface {
 	CreateWorktreeNew(repoRoot, path, branch, startPoint string) error
 	CreateWorktreeExisting(repoRoot, path, branch string) error
 	BranchExists(repoRoot, branch string) (bool, error)
+	SyncBranchWithRemote(repoRoot, branch string) error
 	SyncBaseBranch(repoRoot, baseBranch string) (string, error)
 	RemoveWorktree(repoRoot, path string, force bool) error
 	IsDirty(path string) (bool, error)

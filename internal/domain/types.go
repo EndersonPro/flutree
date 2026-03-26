@@ -114,6 +114,7 @@ type CreateInput struct {
 	RootSelector      string
 	PackageSelectors  []string
 	PackageBaseBranch map[string]string
+	RootFiles         []string
 	GenerateWorkspace bool
 	Yes               bool
 	NonInteractive    bool
@@ -132,6 +133,7 @@ type CreateDryPlan struct {
 	ContainerPath    string
 	Root             PlannedWorktree
 	Packages         []PlannedWorktree
+	RootFiles        []string
 	OverridePath     string
 	OverrideContent  string
 	WorkspacePath    string
@@ -141,6 +143,7 @@ type CreateDryPlan struct {
 type CreateApplyOptions struct {
 	NonInteractive      bool
 	ReuseExistingBranch bool
+	SyncWithRemote      bool
 }
 
 type CreateResult struct {
@@ -148,6 +151,22 @@ type CreateResult struct {
 	NextStep         string
 	SelectedPackages []string
 	WorkspacePath    string
+}
+
+type AddRepoInput struct {
+	WorkspaceName     string
+	ExecutionScope    string
+	RepoSelectors     []string
+	PackageBaseBranch map[string]string
+	RootFiles         []string
+	NonInteractive    bool
+}
+
+type AddRepoResult struct {
+	WorkspaceName  string
+	AddedRepos     []string
+	OverridePath   string
+	SelectedBranch string
 }
 
 type UpdateInput struct {

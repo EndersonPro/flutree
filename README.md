@@ -16,10 +16,12 @@
 - [🔧 Requirements](#-requirements)
 - [🏗️ Commands Reference](#%EF%B8%8F-commands-reference)
   - [create](#create)
+  - [add-repo](#add-repo)
   - [list](#list)
   - [complete](#complete)
   - [pubget](#pubget)
 - [🛠️ Quickstart](#%EF%B8%8F-quickstart)
+- [🆕 Recent CLI adjustments](#-recent-cli-adjustments)
 - [⚙️ Advanced Usage](#%EF%B8%8F-advanced-usage)
 - [🔄 Version and update](#-version-and-update)
 - [🧪 Testing](#-testing)
@@ -74,6 +76,7 @@ Run from inside a Git repository:
 
 ```bash
 flutree create feature-login --branch feature/login --root-repo repo --scope . --yes --non-interactive
+flutree add-repo feature-login --repo core-pkg --scope . --non-interactive
 flutree list
 flutree --version
 flutree update --check
@@ -92,6 +95,19 @@ Default destination root is `~/Documents/worktrees`, generating:
 
 `~/Documents/worktrees/<worktree-name-slug>/`
 
+## 🆕 Recent CLI adjustments
+
+- Every subcommand supports command-scoped help via `--help` and `-h`.
+- `create` keeps package selection flexible:
+  - the interactive stepper still includes the package step,
+  - non-interactive runs still support `--package` and `--package-base`.
+- `add-repo` is the command for attaching repositories after a workspace already exists.
+- Before syncing branches from `origin` during `create`, the CLI now asks for confirmation:
+  - **Yes** → sync from `origin` and continue with worktree creation.
+  - **No** → skip remote sync entirely and continue from local refs.
+- The package step in the `create` stepper is never skipped.
+  If no package candidates are found, the step shows the empty-state message and still waits for Enter.
+
 ## ⚙️ Advanced Usage
 
 ### Two-phase Flow
@@ -102,13 +118,16 @@ Default destination root is `~/Documents/worktrees`, generating:
 
 For automation/non-interactive runs, `create --non-interactive` requires explicit `--yes` and `--root-repo`.
 If the target branch already exists, non-interactive runs also require `--reuse-existing-branch`.
-When creating a new branch, `create` syncs the configured base branch first and fails fast if sync cannot be completed.
-For deterministic package targeting, pass `--package` and optional `--package-base` overrides.
+In interactive mode, after selecting **Apply changes**, `create` asks whether local branches should be synced from `origin` before worktree creation.
+If the answer is **Yes**, `create` syncs before worktree creation and fails fast if sync cannot be completed.
+If the answer is **No**, `create` skips remote sync and continues from local refs.
+For deterministic package targeting during `create`, use `--package` and optional `--package-base`.
+If you forget to include a repository at create time, attach it later with `add-repo`.
 
-Example with explicit package selectors and workspace output:
+Example with root env propagation:
 
 ```bash
-flutree create feature-login --scope . --root-repo root-app --package core-pkg --package-base core-pkg=develop --yes --non-interactive
+flutree create feature-login --scope . --root-repo root-app --copy-root-file ".env.local" --yes --non-interactive
 ```
 
 ### Workspace Control
@@ -116,11 +135,11 @@ flutree create feature-login --scope . --root-repo root-app --package core-pkg -
 Disable workspace generation when needed:
 
 ```bash
-flutree create feature-login --scope . --root-repo root-app --package core-pkg --yes --non-interactive --no-workspace
+flutree create feature-login --scope . --root-repo root-app --yes --non-interactive --no-workspace
 ```
 
 Package override generation rules:
-- `flutree create` writes one `pubspec_override.yaml` in the selected root worktree.
+- `flutree create` writes one `pubspec_overrides.yaml` in the selected root worktree.
 - `pubspec.yaml` is not modified.
 
 VSCode workspace output is MVP-only and includes `folders` entries only.
@@ -128,6 +147,11 @@ VSCode workspace output is MVP-only and includes `folders` entries only.
 Use `--no-workspace` to skip `.code-workspace` output entirely.
 
 ## 🏗️ Commands Reference
+
+All subcommands support:
+
+- `--help`
+- `-h`
 
 ### create
 
@@ -151,6 +175,24 @@ flutree create <name> [options]
 | `--reuse-existing-branch` | boolean | `false` | Reuse existing local branch in non-interactive mode |
 | `--package` | string |  | Package repository selector (repeatable) |
 | `--package-base` | string |  | Override package base branch as `<selector>=<branch>` (repeatable) |
+| `--copy-root-file` | string |  | Extra root-level file/pattern to copy into each worktree (repeatable). By default `.env` and `.env.*` are copied when present |
+
+### add-repo
+
+Attaches additional repositories to an existing managed workspace and regenerates `pubspec_overrides.yaml`.
+
+Usage:
+```
+flutree add-repo <workspace> [options]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--scope` | string | `.` | Directory scope used to discover Flutter repositories |
+| `--repo` | string |  | Repository selector to attach (repeatable). Required in non-interactive mode |
+| `--package-base` | string |  | Override package base branch as `<selector>=<branch>` (repeatable) |
+| `--copy-root-file` | string |  | Extra root-level file/pattern to copy into attached worktrees (repeatable). Default includes `.env` and `.env.*` |
+| `--non-interactive` | boolean | `false` | Disable prompts |
 
 ### list
 
@@ -183,7 +225,7 @@ flutree complete <name> [options]
 
 ### pubget
 
-Runs `pub get` for all managed package repos in parallel, then runs root last.
+Runs `pub get` for all managed package repos in parallel, then runs root last. Includes interactive loading feedback on TTY.
 
 Usage:
 ```
@@ -290,4 +332,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) for interactive UI
 - Inspired by the need to manage complex Flutter monorepo workflows
-

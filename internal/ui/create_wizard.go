@@ -310,12 +310,6 @@ func (m createWizardModel) updateRootRepo(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		selected := m.selectedPackageSelectors()
 		m.refreshPackageCandidates(selected)
-		if len(m.packageCandidates) == 0 {
-			m.selectedPackages = nil
-			m.step = stepBranches
-			m.prepareBranchFieldInput()
-			return m, nil
-		}
 		m.step = stepPackages
 		return m, nil
 	case "esc":
