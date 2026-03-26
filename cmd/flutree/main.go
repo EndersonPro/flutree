@@ -19,7 +19,7 @@ import (
 	"github.com/EndersonPro/flutree/internal/ui"
 )
 
-var version = "0.9.0"
+var version = "dev"
 
 var branchNameSanitizer = regexp.MustCompile(`[^a-z0-9]+`)
 

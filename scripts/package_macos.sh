@@ -5,6 +5,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
+  ARCH=arm64 scripts/package_macos.sh [build|contract]
   VERSION=<semver> ARCH=arm64 scripts/package_macos.sh [build|contract]
 
 Modes:
@@ -12,7 +13,7 @@ Modes:
   contract  Print expected artifact filenames and exit
 
 Env vars:
-  VERSION   Required. Release version without leading "v" (example: 0.3.0)
+  VERSION   Optional override. Defaults to VERSION file in repository root
   ARCH      Required. Must be arm64 for initial release scope
   OUTPUT_DIR Optional. Defaults to dist
 EOF
@@ -28,10 +29,15 @@ fi
 VERSION="${VERSION:-}"
 ARCH="${ARCH:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-dist}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION_FILE="${ROOT_DIR}/VERSION"
 
 if [[ -z "${VERSION}" ]]; then
-  echo "VERSION is required"
-  exit 2
+  if [[ ! -f "${VERSION_FILE}" ]]; then
+    echo "VERSION file not found: ${VERSION_FILE}"
+    exit 2
+  fi
+  VERSION="$(tr -d '[:space:]' < "${VERSION_FILE}")"
 fi
 
 if [[ -z "${ARCH}" ]]; then
@@ -54,7 +60,6 @@ if [[ "${MODE}" == "contract" ]]; then
   exit 0
 fi
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUTPUT_PATH="${ROOT_DIR}/${OUTPUT_DIR}"
 
 mkdir -p "${OUTPUT_PATH}"
@@ -63,7 +68,7 @@ BUILD_DIR="$(mktemp -d)"
 trap 'rm -rf "${BUILD_DIR}"' EXIT
 
 CGO_ENABLED=0 GOOS=darwin GOARCH="${ARCH}" \
-  go build -ldflags="-s -w" -o "${BUILD_DIR}/dist/flutree" ./cmd/flutree
+  go build -ldflags="-s -w -X main.version=${VERSION}" -o "${BUILD_DIR}/dist/flutree" ./cmd/flutree
 
 mkdir -p "${BUILD_DIR}/package"
 cp "${BUILD_DIR}/dist/flutree" "${BUILD_DIR}/package/flutree"

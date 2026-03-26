@@ -250,6 +250,13 @@ flutree --version
 flutree version
 ```
 
+Single source of truth policy:
+
+- `VERSION` in the repository root is the only canonical release version.
+- Packaging injects this value into CLI output (`flutree --version`).
+- Release gate enforces `tag == VERSION == flutree --version`.
+- Release Please is the default tag generation flow on merges to `main`.
+
 Brew-only update flow:
 
 ```bash
@@ -266,6 +273,15 @@ Exit code contract for version/update paths:
 - `0`: success
 - `1`: brew/precondition/process failure on `update`
 - `2`: input/cancel validation failures
+
+Release contract verification commands:
+
+```bash
+./scripts/check_version_contract.sh
+./scripts/check_version_contract.sh --tag v$(cat VERSION)
+ARCH=arm64 ./scripts/package_macos.sh build
+./scripts/verify_macos_binary.sh dist/flutree-$(cat VERSION)-macos-arm64.tar.gz --expected-version $(cat VERSION)
+```
 
 ## 🧪 Testing
 
