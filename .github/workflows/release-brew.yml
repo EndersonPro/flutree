@@ -25,9 +25,10 @@ jobs:
       - name: Download Go modules
         run: go mod download
 
-      - name: Compute version and artifact names
+      - name: Validate tag matches VERSION file
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          ./scripts/check_version_contract.sh --tag "${GITHUB_REF_NAME}"
+          VERSION="$(tr -d '[:space:]' < VERSION)"
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "TARBALL=flutree-${VERSION}-macos-${ARCH}.tar.gz" >> "$GITHUB_ENV"
           echo "SHAFILE=flutree-${VERSION}-macos-${ARCH}.sha256" >> "$GITHUB_ENV"
@@ -49,7 +50,7 @@ jobs:
           test -f "dist/$SHAFILE"
 
       - name: Smoke verify binary
-        run: ./scripts/verify_macos_binary.sh "dist/$TARBALL"
+        run: ./scripts/verify_macos_binary.sh "dist/$TARBALL" --expected-version "$VERSION"
 
       - name: Publish release assets
         uses: softprops/action-gh-release@v2

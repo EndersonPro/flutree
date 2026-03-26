@@ -25,3 +25,14 @@ jobs:
 
       - name: Run tests
         run: go test ./...
+
+  version-contract:
+    name: version-contract
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate VERSION semver contract
+        run: ./scripts/check_version_contract.sh
