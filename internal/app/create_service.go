@@ -42,9 +42,12 @@ func (s *CreateService) BuildDryPlan(input domain.CreateInput) (domain.CreateDry
 		return domain.CreateDryPlan{}, err
 	}
 
-	packages, err := s.resolvePackageRepos(repos, rootRepo, input.PackageSelectors, input.NonInteractive)
-	if err != nil {
-		return domain.CreateDryPlan{}, err
+	packages := []domain.DiscoveredFlutterRepo{}
+	if !input.NoPackage {
+		packages, err = s.resolvePackageRepos(repos, rootRepo, input.PackageSelectors, input.NonInteractive)
+		if err != nil {
+			return domain.CreateDryPlan{}, err
+		}
 	}
 
 	container := filepath.Join(destinationRoot(), normalizedName)

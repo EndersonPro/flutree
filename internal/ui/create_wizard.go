@@ -17,6 +17,7 @@ type CreateWizardInput struct {
 	BaseBranch        string
 	GenerateWorkspace bool
 	RootSelector      string
+	NoPackage         bool
 	PackageSelectors  []string
 	PackageBaseBranch map[string]string
 }
@@ -27,6 +28,7 @@ type CreateWizardResult struct {
 	BaseBranch        string
 	GenerateWorkspace bool
 	RootSelector      string
+	NoPackage         bool
 	PackageSelectors  []string
 	PackageBaseBranch map[string]string
 	Apply             bool
@@ -62,6 +64,7 @@ type createWizardModel struct {
 	branch            string
 	baseBranch        string
 	generateWorkspace bool
+	noPackage         bool
 
 	rootIndex int
 
@@ -114,6 +117,7 @@ func RunCreateWizard(input CreateWizardInput, repos []domain.DiscoveredFlutterRe
 		BaseBranch:        strings.TrimSpace(finalModel.baseBranch),
 		GenerateWorkspace: finalModel.generateWorkspace,
 		RootSelector:      finalModel.repos[finalModel.rootIndex].Name,
+		NoPackage:         finalModel.noPackage,
 		PackageSelectors:  selectors,
 		PackageBaseBranch: copyStringMap(finalModel.pkgBaseBranch),
 		Apply:             finalModel.finalChoice == 1,
@@ -163,6 +167,7 @@ func newCreateWizardModel(input CreateWizardInput, repos []domain.DiscoveredFlut
 		branch:            branch,
 		baseBranch:        baseBranch,
 		generateWorkspace: input.GenerateWorkspace,
+		noPackage:         input.NoPackage,
 		rootIndex:         rootIndex,
 		pkgSelected:       map[int]bool{},
 		pkgBaseBranch:     copyStringMap(input.PackageBaseBranch),
@@ -244,6 +249,11 @@ func (m createWizardModel) View() string {
 	case stepPackages:
 		b.WriteString(wizardSectionStyle.Render("Step 3 - Select packages"))
 		b.WriteString("\n")
+		if m.noPackage {
+			b.WriteString("Package selection skipped (--no-package).\n")
+			b.WriteString(wizardHintStyle.Render("Enter to continue"))
+			break
+		}
 		if len(m.packageCandidates) == 0 {
 			b.WriteString("No package candidates found for this root.\n")
 			b.WriteString(wizardHintStyle.Render("Enter to continue"))
@@ -308,6 +318,13 @@ func (m createWizardModel) updateRootRepo(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.errMsg = ""
 	case "enter":
+		if m.noPackage {
+			m.selectedPackages = nil
+			m.pkgBaseBranch = map[string]string{}
+			m.step = stepBranches
+			m.prepareBranchFieldInput()
+			return m, nil
+		}
 		selected := m.selectedPackageSelectors()
 		m.refreshPackageCandidates(selected)
 		m.step = stepPackages
@@ -321,6 +338,21 @@ func (m createWizardModel) updateRootRepo(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m createWizardModel) updatePackages(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.noPackage {
+		if msg.String() == "enter" {
+			m.selectedPackages = nil
+			m.pkgBaseBranch = map[string]string{}
+			m.step = stepBranches
+			m.prepareBranchFieldInput()
+		}
+		if msg.String() == "esc" {
+			m.cancelled = true
+			m.done = true
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+
 	if len(m.packageCandidates) == 0 {
 		if msg.String() == "enter" {
 			m.selectedPackages = nil

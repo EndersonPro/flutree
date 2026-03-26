@@ -73,7 +73,10 @@ func (f *fakeCreateGit) DiscoverFlutterRepos(scope string) ([]domain.DiscoveredF
 	return f.repos, nil
 }
 
-type fakeCreatePrompt struct{ forceDecline bool }
+type fakeCreatePrompt struct {
+	forceDecline bool
+	askTextCalls int
+}
 
 func (f *fakeCreatePrompt) Confirm(message string, nonInteractive, assumeYes bool) (bool, error) {
 	if f.forceDecline {
@@ -91,7 +94,44 @@ func (f *fakeCreatePrompt) SelectPackages(message string, choices []string, nonI
 	return choices, nil
 }
 func (f *fakeCreatePrompt) AskText(message, defaultValue string, nonInteractive bool) (string, error) {
+	f.askTextCalls++
 	return defaultValue, nil
+}
+
+func TestBuildDryPlanNoPackageCreatesRootOnlyPlan(t *testing.T) {
+	root := t.TempDir()
+	repoRoot := filepath.Join(root, "root-app")
+	repoPkg := filepath.Join(root, "core-pkg")
+	g := &fakeCreateGit{
+		repos: []domain.DiscoveredFlutterRepo{
+			{Name: "root-app", RepoRoot: repoRoot, PackageName: "root_app"},
+			{Name: "core-pkg", RepoRoot: repoPkg, PackageName: "core"},
+		},
+	}
+	p := &fakeCreatePrompt{}
+	svc := NewCreateService(g, &fakeRegistry{}, p)
+
+	plan, err := svc.BuildDryPlan(domain.CreateInput{
+		Name:           "root-only",
+		Branch:         "feature/root-only",
+		BaseBranch:     "main",
+		ExecutionScope: root,
+		RootSelector:   "root-app",
+		NoPackage:      true,
+		NonInteractive: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(plan.Packages) != 0 {
+		t.Fatalf("expected no package plans in no-package mode, got %d", len(plan.Packages))
+	}
+	if !strings.Contains(plan.OverrideContent, "dependency_overrides:\n  {}") {
+		t.Fatalf("expected empty overrides in no-package mode, got: %s", plan.OverrideContent)
+	}
+	if p.askTextCalls != 0 {
+		t.Fatalf("expected no package base prompts in no-package mode, got %d", p.askTextCalls)
+	}
 }
 
 func TestBuildDryPlanBuildsRootAndPackagePlans(t *testing.T) {

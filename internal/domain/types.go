@@ -66,6 +66,11 @@ type ListRow struct {
 	PackageCount int
 }
 
+type ListInput struct {
+	ShowAll     bool
+	GlobalScope bool
+}
+
 type CompleteInput struct {
 	Name           string
 	Yes            bool
@@ -112,6 +117,7 @@ type CreateInput struct {
 	BaseBranch        string
 	ExecutionScope    string
 	RootSelector      string
+	NoPackage         bool
 	PackageSelectors  []string
 	PackageBaseBranch map[string]string
 	RootFiles         []string

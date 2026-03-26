@@ -59,6 +59,46 @@ func TestCreateWizardRequiresAtLeastOnePackage(t *testing.T) {
 	}
 }
 
+func TestCreateWizardNoPackageSkipsPackageValidation(t *testing.T) {
+	repos := []domain.DiscoveredFlutterRepo{
+		{Name: "root-app", PackageName: "root_app", RepoRoot: "/repos/root-app"},
+		{Name: "core", PackageName: "core", RepoRoot: "/repos/core"},
+	}
+
+	m := newCreateWizardModel(CreateWizardInput{NoPackage: true}, repos)
+	m.step = stepPackages
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	newModel := updated.(createWizardModel)
+
+	if newModel.errMsg != "" {
+		t.Fatalf("did not expect validation error in no-package mode: %q", newModel.errMsg)
+	}
+	if newModel.step != stepBranches {
+		t.Fatalf("expected branches step in no-package mode, got %v", newModel.step)
+	}
+}
+
+func TestCreateWizardNoPackageRootStepJumpsToBranches(t *testing.T) {
+	repos := []domain.DiscoveredFlutterRepo{
+		{Name: "root-app", PackageName: "root_app", RepoRoot: "/repos/root-app"},
+		{Name: "core", PackageName: "core", RepoRoot: "/repos/core"},
+	}
+
+	m := newCreateWizardModel(CreateWizardInput{RootSelector: "root-app", NoPackage: true}, repos)
+	m.step = stepRootRepo
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	newModel := updated.(createWizardModel)
+
+	if newModel.step != stepBranches {
+		t.Fatalf("expected to jump to branch step in no-package mode, got %v", newModel.step)
+	}
+	if len(newModel.selectedPackages) != 0 {
+		t.Fatalf("expected no selected packages in no-package mode")
+	}
+}
+
 func TestCreateWizardRootEnterMovesToPackageStepWhenCandidatesExist(t *testing.T) {
 	repos := []domain.DiscoveredFlutterRepo{
 		{Name: "root-app", PackageName: "root_app", RepoRoot: "/repos/root-app"},

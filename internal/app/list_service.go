@@ -17,10 +17,13 @@ func NewListService(git GitPort, registry RegistryPort) *ListService {
 	return &ListService{git: git, registry: registry}
 }
 
-func (s *ListService) Run(showAll bool) ([]domain.ListRow, error) {
-	currentRepo, err := s.git.EnsureRepo()
-	if err != nil {
-		currentRepo = ""
+func (s *ListService) Run(input domain.ListInput) ([]domain.ListRow, error) {
+	currentRepo := ""
+	if !input.GlobalScope {
+		repo, err := s.git.EnsureRepo()
+		if err == nil {
+			currentRepo = repo
+		}
 	}
 
 	allRecords, err := s.registry.ListRecords()
@@ -96,7 +99,7 @@ func (s *ListService) Run(showAll bool) ([]domain.ListRow, error) {
 		})
 	}
 
-	if showAll {
+	if input.ShowAll {
 		for _, entries := range worktreesByRepo {
 			for _, e := range entries {
 				p := filepath.Clean(e.Path)
