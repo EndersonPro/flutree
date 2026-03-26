@@ -346,7 +346,7 @@ func TestListHidesPackageRowsAndAnnotatesRootCount(t *testing.T) {
 	}}
 
 	s := NewListService(g, r)
-	rows, err := s.Run(false)
+	rows, err := s.Run(domain.ListInput{ShowAll: false})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -383,11 +383,70 @@ func TestListOutsideRepoFallsBackToGlobalRegistry(t *testing.T) {
 	}}
 
 	s := NewListService(g, r)
-	rows, err := s.Run(false)
+	rows, err := s.Run(domain.ListInput{ShowAll: false})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(rows))
+	}
+}
+
+func TestListGlobalScopeIgnoresCurrentRepoFilter(t *testing.T) {
+	g := &fakeGit{
+		currentRepo: "/tmp/repo-a",
+		worktrees: map[string][]domain.GitWorktreeEntry{
+			"/tmp/repo-a": {{Path: "/tmp/wt/a", Branch: "feature/a"}},
+			"/tmp/repo-b": {{Path: "/tmp/wt/b", Branch: "feature/b"}},
+		},
+	}
+	r := &fakeRegistry{records: []domain.RegistryRecord{
+		{Name: "a", Branch: "feature/a", Path: "/tmp/wt/a", RepoRoot: "/tmp/repo-a", Status: "active"},
+		{Name: "b", Branch: "feature/b", Path: "/tmp/wt/b", RepoRoot: "/tmp/repo-b", Status: "active"},
+	}}
+
+	s := NewListService(g, r)
+	rows, err := s.Run(domain.ListInput{GlobalScope: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected global rows from all repos, got %d", len(rows))
+	}
+}
+
+func TestListGlobalAllIncludesUnmanagedAcrossRegisteredRepos(t *testing.T) {
+	g := &fakeGit{
+		currentRepo: "/tmp/repo-a",
+		worktrees: map[string][]domain.GitWorktreeEntry{
+			"/tmp/repo-a": {
+				{Path: "/tmp/wt/a", Branch: "feature/a"},
+				{Path: "/tmp/wt/a-unmanaged", Branch: "feature/unmanaged-a"},
+			},
+			"/tmp/repo-b": {
+				{Path: "/tmp/wt/b", Branch: "feature/b"},
+				{Path: "/tmp/wt/b-unmanaged", Branch: "feature/unmanaged-b"},
+			},
+		},
+	}
+	r := &fakeRegistry{records: []domain.RegistryRecord{
+		{Name: "a", Branch: "feature/a", Path: "/tmp/wt/a", RepoRoot: "/tmp/repo-a", Status: "active"},
+		{Name: "b", Branch: "feature/b", Path: "/tmp/wt/b", RepoRoot: "/tmp/repo-b", Status: "active"},
+	}}
+
+	s := NewListService(g, r)
+	rows, err := s.Run(domain.ListInput{ShowAll: true, GlobalScope: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	unmanaged := 0
+	for _, row := range rows {
+		if row.Status == "unmanaged" {
+			unmanaged++
+		}
+	}
+	if unmanaged != 2 {
+		t.Fatalf("expected unmanaged rows from both repos, got %d (%+v)", unmanaged, rows)
 	}
 }

@@ -174,12 +174,12 @@ func TestSubcommandHelpContracts(t *testing.T) {
 		{
 			name:     "create long help",
 			args:     []string{"create", "--help"},
-			contains: []string{"flutree create <name> [options]", "--branch", "--root-repo", "--package", "--package-base", "--copy-root-file"},
+			contains: []string{"flutree create <name> [options]", "--branch", "--root-repo", "--no-package", "--package", "--package-base", "--copy-root-file"},
 		},
 		{
 			name:     "create short help",
 			args:     []string{"create", "-h"},
-			contains: []string{"flutree create <name> [options]", "--branch", "--root-repo", "--package"},
+			contains: []string{"flutree create <name> [options]", "--branch", "--root-repo", "--no-package", "--package"},
 		},
 		{
 			name:     "add-repo help",
@@ -199,7 +199,7 @@ func TestSubcommandHelpContracts(t *testing.T) {
 		{
 			name:     "list help",
 			args:     []string{"list", "--help"},
-			contains: []string{"flutree list [options]", "--all"},
+			contains: []string{"flutree list [options]", "--all", "--global"},
 		},
 		{
 			name:     "update help",
@@ -289,6 +289,195 @@ func TestListWorksOutsideGitRepoUsingGlobalRegistry(t *testing.T) {
 	}
 	if !strings.Contains(res.stdout, "feature-login") {
 		t.Fatalf("missing registry entry in output: %s", res.stdout)
+	}
+}
+
+func TestCreateNoPackageRejectsPackageFlagDeterministically(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	repo := filepath.Join(scope, "root-app")
+	initRepo(t, repo)
+
+	run := func() runResult {
+		return runCLI(
+			t, bin, repo, testEnv(home), "",
+			"create", "feature-login",
+			"--scope", scope,
+			"--root-repo", "root-app",
+			"--no-package",
+			"--package", "core",
+			"--yes",
+			"--non-interactive",
+		)
+	}
+
+	first := run()
+	second := run()
+	if first.code != 2 || second.code != 2 {
+		t.Fatalf("expected exit code 2 for both runs, got %d and %d", first.code, second.code)
+	}
+	if !strings.Contains(first.stderr, "--no-package") || !strings.Contains(first.stderr, "--package") {
+		t.Fatalf("expected deterministic conflict message, got: %s", first.stderr)
+	}
+	if first.stderr != second.stderr {
+		t.Fatalf("expected deterministic stderr for same invalid flags. first=%q second=%q", first.stderr, second.stderr)
+	}
+}
+
+func TestCreateNoPackageRejectsPackageBaseFlagDeterministically(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	repo := filepath.Join(scope, "root-app")
+	initRepo(t, repo)
+
+	res := runCLI(
+		t, bin, repo, testEnv(home), "",
+		"create", "feature-login",
+		"--scope", scope,
+		"--root-repo", "root-app",
+		"--no-package",
+		"--package-base", "core=main",
+		"--yes",
+		"--non-interactive",
+	)
+	if res.code != 2 {
+		t.Fatalf("expected 2, got %d (%s)", res.code, res.stderr)
+	}
+	if !strings.Contains(res.stderr, "--no-package") || !strings.Contains(res.stderr, "--package-base") {
+		t.Fatalf("expected conflict message with incompatible flags, got: %s", res.stderr)
+	}
+}
+
+func TestCreateNoPackageCreatesRootOnlyArtifacts(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	rootRepo := filepath.Join(scope, "root-app")
+	coreRepo := filepath.Join(scope, "core-pkg")
+	initRepoWithPackageName(t, rootRepo, "root_app")
+	initRepoWithPackageName(t, coreRepo, "core")
+
+	create := runCLI(
+		t, bin, rootRepo, testEnv(home), "",
+		"create", "feature-login",
+		"--branch", "feature/login",
+		"--scope", scope,
+		"--root-repo", "root-app",
+		"--no-package",
+		"--yes",
+		"--non-interactive",
+	)
+	if create.code != 0 {
+		t.Fatalf("create failed: %d %s", create.code, create.stderr)
+	}
+
+	overridePath := filepath.Join(home, "Documents", "worktrees", "feature-login", "root", "root-app", "pubspec_overrides.yaml")
+	content, err := os.ReadFile(overridePath)
+	if err != nil {
+		t.Fatalf("failed to read override file: %v", err)
+	}
+	if !strings.Contains(string(content), "dependency_overrides:\n  {}") {
+		t.Fatalf("expected empty override map in no-package mode, got: %s", string(content))
+	}
+
+	pkgPath := filepath.Join(home, "Documents", "worktrees", "feature-login", "packages")
+	if _, err := os.Stat(pkgPath); !os.IsNotExist(err) {
+		t.Fatalf("expected no packages directory in no-package mode, stat err=%v", err)
+	}
+}
+
+func TestListGlobalIncludesRowsOutsideCurrentRepo(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	repoA := filepath.Join(t.TempDir(), "repo-a")
+	repoB := filepath.Join(t.TempDir(), "repo-b")
+	initRepo(t, repoA)
+	initRepo(t, repoB)
+	repoARoot := strings.TrimSpace(runGit(t, repoA, "rev-parse", "--show-toplevel"))
+	repoBRoot := strings.TrimSpace(runGit(t, repoB, "rev-parse", "--show-toplevel"))
+
+	writeRegistry(t, home, map[string]any{
+		"version": 1,
+		"records": []map[string]any{
+			{
+				"name":      "feature-a",
+				"branch":    "feature/a",
+				"path":      "/tmp/worktrees/feature-a",
+				"repo_root": repoARoot,
+				"status":    "active",
+			},
+			{
+				"name":      "feature-b",
+				"branch":    "feature/b",
+				"path":      "/tmp/worktrees/feature-b",
+				"repo_root": repoBRoot,
+				"status":    "active",
+			},
+		},
+	})
+
+	defaultRes := runCLI(t, bin, repoA, testEnv(home), "", "list")
+	if defaultRes.code != 0 {
+		t.Fatalf("expected 0 for default list, got %d (%s)", defaultRes.code, defaultRes.stderr)
+	}
+	if !strings.Contains(defaultRes.stdout, "feature-a") || strings.Contains(defaultRes.stdout, "feature-b") {
+		t.Fatalf("expected current-repo scoped list by default, got: %s", defaultRes.stdout)
+	}
+
+	globalRes := runCLI(t, bin, repoA, testEnv(home), "", "list", "--global")
+	if globalRes.code != 0 {
+		t.Fatalf("expected 0 for global list, got %d (%s)", globalRes.code, globalRes.stderr)
+	}
+	if !strings.Contains(globalRes.stdout, "feature-a") || !strings.Contains(globalRes.stdout, "feature-b") {
+		t.Fatalf("expected global list to include all repo rows, got: %s", globalRes.stdout)
+	}
+}
+
+func TestListGlobalAllIncludesUnmanagedAcrossRepos(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	repoA := filepath.Join(t.TempDir(), "repo-a")
+	repoB := filepath.Join(t.TempDir(), "repo-b")
+	initRepo(t, repoA)
+	initRepo(t, repoB)
+	repoARoot := strings.TrimSpace(runGit(t, repoA, "rev-parse", "--show-toplevel"))
+	repoBRoot := strings.TrimSpace(runGit(t, repoB, "rev-parse", "--show-toplevel"))
+
+	worktreeA := filepath.Join(t.TempDir(), "wt-a-unmanaged")
+	worktreeB := filepath.Join(t.TempDir(), "wt-b-unmanaged")
+	runGit(t, repoA, "worktree", "add", "-b", "feature/unmanaged-a", worktreeA, "main")
+	runGit(t, repoB, "worktree", "add", "-b", "feature/unmanaged-b", worktreeB, "main")
+
+	writeRegistry(t, home, map[string]any{
+		"version": 1,
+		"records": []map[string]any{
+			{
+				"name":      "feature-a",
+				"branch":    "feature/a",
+				"path":      "/tmp/worktrees/feature-a",
+				"repo_root": repoARoot,
+				"status":    "active",
+			},
+			{
+				"name":      "feature-b",
+				"branch":    "feature/b",
+				"path":      "/tmp/worktrees/feature-b",
+				"repo_root": repoBRoot,
+				"status":    "active",
+			},
+		},
+	})
+
+	res := runCLI(t, bin, repoA, testEnv(home), "", "list", "--global", "--all")
+	if res.code != 0 {
+		t.Fatalf("expected 0, got %d (%s)", res.code, res.stderr)
+	}
+	if !strings.Contains(res.stdout, filepath.Base(worktreeA)) || !strings.Contains(res.stdout, filepath.Base(worktreeB)) {
+		t.Fatalf("expected unmanaged rows from both repositories, got: %s", res.stdout)
 	}
 }
 

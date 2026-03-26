@@ -41,12 +41,15 @@ go test ./...
 - Creates a new worktree and branch.
 - Persists metadata in the global registry.
 - Runs preflight checkpoints before any mutation is applied.
+- `--no-package` enables explicit root-only creation and skips package metadata flow.
+- `--no-package` conflicts with `--package` and `--package-base`.
 - If a target branch already exists, asks for explicit reuse confirmation (or requires `--reuse-existing-branch` in non-interactive mode).
 - Syncs the configured base branch before any new branch worktree creation.
 
-`flutree list [--all]`
+`flutree list [--all] [--global]`
 - Lists managed entries for the current repository when running inside a repo.
 - If running outside a repo, it falls back to the global registry view.
+- `--global` forces global registry scope from any current directory.
 - `--all` also includes unmanaged Git worktrees discovered from `git worktree list --porcelain` for discovered managed repos.
 
 `flutree complete NAME [OPTIONS]`
@@ -73,6 +76,7 @@ Options:
 - `--base-branch TEXT`: source branch for root worktree creation (default: `main`).
 - `--scope PATH`: execution directory scope used to discover Flutter repositories (default: current directory).
 - `--root-repo TEXT`: explicit root repository selector for non-interactive usage.
+- `--no-package`: explicit root-only mode; skip package selection and package metadata prompts.
 - `--package, -p TEXT`: explicit package repository selector (repeatable).
 - `--package-base TEXT`: per-package base branch override in `<selector>=<branch>` format (repeatable, default `develop`).
 - `--workspace/--no-workspace`: enable or disable VSCode `.code-workspace` generation (enabled by default).
@@ -88,6 +92,7 @@ Examples:
 
 ```bash
 flutree create auth-fix --branch feature/auth-fix --scope .
+flutree create auth-fix --scope ~/code --root-repo app-root --no-package --yes --non-interactive
 flutree create auth-fix --scope ~/code --root-repo app-root --package package-core --package package-ui
 flutree create auth-fix --scope ~/code --root-repo app-root --package package-core --package-base package-core=develop --yes --non-interactive
 ```
@@ -101,7 +106,7 @@ Generated worktrees are grouped into:
 - packages: `~/Documents/worktrees/<worktree-name-slug>/packages/<package-repo-folder>/`
 
 Package override output:
-- `flutree create` writes exactly one `pubspec_override.yaml` in the selected root worktree.
+- `flutree create` writes exactly one `pubspec_overrides.yaml` in the selected root worktree.
 - dependency paths target selected package worktree paths.
 - `pubspec.yaml` is never modified by this workflow.
 
@@ -123,6 +128,12 @@ VSCode workspace output (MVP):
 
 Options:
 - `--all`: include unmanaged worktrees in the output table.
+- `--global`: force global registry scope from any current directory.
+
+Scope behavior:
+- `flutree list`: repo-scoped when running inside a repository, global fallback outside repositories.
+- `flutree list --global`: always global scope, independent of CWD.
+- `flutree list --global --all`: global scope plus unmanaged rows across all selected repositories.
 
 Output fields:
 - `Name`: managed name, or `-` for unmanaged rows.

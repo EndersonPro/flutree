@@ -55,6 +55,7 @@ func main() {
 func runList(args []string) error {
 	fs := newFlagSet("list", printListHelp)
 	showAll := fs.Bool("all", false, "Include unmanaged Git worktrees.")
+	globalScope := fs.Bool("global", false, "List managed worktrees across all registered repositories.")
 	if len(args) > 0 && isHelpToken(args[0]) {
 		printListHelp()
 		return nil
@@ -68,7 +69,7 @@ func runList(args []string) error {
 	}
 
 	service := app.NewListService(&infraGit.Gateway{}, registry.NewDefault())
-	rows, err := service.Run(*showAll)
+	rows, err := service.Run(domain.ListInput{ShowAll: *showAll, GlobalScope: *globalScope})
 	if err != nil {
 		return err
 	}
@@ -122,6 +123,7 @@ func runCreate(args []string) error {
 	yes := fs.Bool("yes", false, "Acknowledge dry plan automatically in non-interactive mode.")
 	nonInteractive := fs.Bool("non-interactive", false, "Disable prompts.")
 	reuseExistingBranch := fs.Bool("reuse-existing-branch", false, "Allow non-interactive reuse when target branch already exists.")
+	noPackage := fs.Bool("no-package", false, "Create root-only worktree without package selection.")
 
 	var packages multiFlag
 	var packageBase multiFlag
@@ -144,6 +146,15 @@ func runCreate(args []string) error {
 	}
 	if helpRequested {
 		return nil
+	}
+	if *noPackage && len(packages) > 0 && len(packageBase) > 0 {
+		return domain.NewError(domain.CategoryInput, 2, "Flag --no-package cannot be combined with --package or --package-base.", "Remove --no-package or remove package flags.", nil)
+	}
+	if *noPackage && len(packages) > 0 {
+		return domain.NewError(domain.CategoryInput, 2, "Flag --no-package cannot be combined with --package.", "Remove --no-package or remove --package.", nil)
+	}
+	if *noPackage && len(packageBase) > 0 {
+		return domain.NewError(domain.CategoryInput, 2, "Flag --no-package cannot be combined with --package-base.", "Remove --no-package or remove --package-base.", nil)
 	}
 	if *nonInteractive && strings.TrimSpace(*rootRepo) == "" {
 		return domain.NewError(domain.CategoryInput, 2, "Non-interactive mode requires explicit root repository selection.", "Pass --root-repo with a discovered repository name or path.", nil)
@@ -175,6 +186,7 @@ func runCreate(args []string) error {
 		BaseBranch:        *baseBranch,
 		ExecutionScope:    *scope,
 		RootSelector:      *rootRepo,
+		NoPackage:         *noPackage,
 		PackageSelectors:  packages,
 		PackageBaseBranch: baseMap,
 		RootFiles:         copyRootFiles,
@@ -197,6 +209,7 @@ func runCreate(args []string) error {
 			BaseBranch:        *baseBranch,
 			GenerateWorkspace: genWorkspace,
 			RootSelector:      *rootRepo,
+			NoPackage:         *noPackage,
 			PackageSelectors:  packages,
 			PackageBaseBranch: baseMap,
 		}, repos)
@@ -211,6 +224,7 @@ func runCreate(args []string) error {
 		createInput.Branch = wizardResult.Branch
 		createInput.BaseBranch = wizardResult.BaseBranch
 		createInput.RootSelector = wizardResult.RootSelector
+		createInput.NoPackage = wizardResult.NoPackage
 		createInput.PackageSelectors = wizardResult.PackageSelectors
 		createInput.PackageBaseBranch = wizardResult.PackageBaseBranch
 		createInput.GenerateWorkspace = wizardResult.GenerateWorkspace
@@ -225,6 +239,7 @@ func runCreate(args []string) error {
 		BaseBranch:        createInput.BaseBranch,
 		ExecutionScope:    createInput.ExecutionScope,
 		RootSelector:      createInput.RootSelector,
+		NoPackage:         createInput.NoPackage,
 		PackageSelectors:  createInput.PackageSelectors,
 		PackageBaseBranch: createInput.PackageBaseBranch,
 		RootFiles:         createInput.RootFiles,
@@ -453,7 +468,7 @@ func printHelp() {
 	fmt.Println("  flutree version")
 	fmt.Println("  flutree create <name> [options]")
 	fmt.Println("  flutree add-repo <workspace> [options]")
-	fmt.Println("  flutree list [--all]")
+	fmt.Println("  flutree list [options]")
 	fmt.Println("  flutree complete <name> [options]")
 	fmt.Println("  flutree pubget <name> [--force]")
 	fmt.Println("  flutree update [--check|--apply]")
@@ -526,6 +541,7 @@ func printCreateHelp() {
 	fmt.Println("  --yes                             Acknowledge dry plan automatically in non-interactive mode")
 	fmt.Println("  --non-interactive                 Disable prompts")
 	fmt.Println("  --reuse-existing-branch           Allow non-interactive reuse when target branch already exists")
+	fmt.Println("  --no-package                      Create root-only worktree without package selection")
 	fmt.Println("  --copy-root-file <pattern>        Extra root-level file/pattern to copy into each worktree (repeatable)")
 	fmt.Println("  --package <selector>              Package repository selector (repeatable)")
 	fmt.Println("  --package-base <sel>=<branch>     Override package base branch (repeatable)")
@@ -551,6 +567,7 @@ func printListHelp() {
 	fmt.Println("")
 	fmt.Println("Options:")
 	fmt.Println("  --all                             Include unmanaged Git worktrees")
+	fmt.Println("  --global                          List managed worktrees across all registered repositories")
 	fmt.Println("  -h, --help                        Show this help")
 }
 

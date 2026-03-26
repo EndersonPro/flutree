@@ -98,15 +98,15 @@ Default destination root is `~/Documents/worktrees`, generating:
 ## 🆕 Recent CLI adjustments
 
 - Every subcommand supports command-scoped help via `--help` and `-h`.
-- `create` keeps package selection flexible:
-  - the interactive stepper still includes the package step,
-  - non-interactive runs still support `--package` and `--package-base`.
+- `create --no-package` is now an explicit root-only mode:
+  - package selection is skipped in interactive mode,
+  - `--no-package` conflicts with `--package` and `--package-base` (fail-fast input error).
 - `add-repo` is the command for attaching repositories after a workspace already exists.
 - Before syncing branches from `origin` during `create`, the CLI now asks for confirmation:
   - **Yes** → sync from `origin` and continue with worktree creation.
   - **No** → skip remote sync entirely and continue from local refs.
-- The package step in the `create` stepper is never skipped.
-  If no package candidates are found, the step shows the empty-state message and still waits for Enter.
+- `list --global` always uses global registry scope, regardless of current directory.
+- `list --global --all` includes unmanaged worktrees across all globally selected repositories.
 
 ## ⚙️ Advanced Usage
 
@@ -118,6 +118,8 @@ Default destination root is `~/Documents/worktrees`, generating:
 
 For automation/non-interactive runs, `create --non-interactive` requires explicit `--yes` and `--root-repo`.
 If the target branch already exists, non-interactive runs also require `--reuse-existing-branch`.
+Use `--no-package` when you need a root-only workspace and no package metadata flow.
+`--no-package` cannot be combined with `--package` or `--package-base`.
 In interactive mode, after selecting **Apply changes**, `create` asks whether local branches should be synced from `origin` before worktree creation.
 If the answer is **Yes**, `create` syncs before worktree creation and fails fast if sync cannot be completed.
 If the answer is **No**, `create` skips remote sync and continues from local refs.
@@ -173,6 +175,7 @@ flutree create <name> [options]
 | `--yes` | boolean | `false` | Acknowledge dry plan automatically in non-interactive mode |
 | `--non-interactive` | boolean | `false` | Disable prompts |
 | `--reuse-existing-branch` | boolean | `false` | Reuse existing local branch in non-interactive mode |
+| `--no-package` | boolean | `false` | Root-only mode (skip package selection and package metadata) |
 | `--package` | string |  | Package repository selector (repeatable) |
 | `--package-base` | string |  | Override package base branch as `<selector>=<branch>` (repeatable) |
 | `--copy-root-file` | string |  | Extra root-level file/pattern to copy into each worktree (repeatable). By default `.env` and `.env.*` are copied when present |
@@ -196,16 +199,18 @@ flutree add-repo <workspace> [options]
 
 ### list
 
-Lists managed worktrees (scoped to current repo when available, otherwise global registry scope).
+Lists managed worktrees. By default, scope is current repo when available (fallback to global outside a repo).
+Use `--global` to force global registry scope from any location.
 
 Usage:
 ```
-flutree list [--all]
+flutree list [options]
 ```
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--all` | boolean | `false` | Include unmanaged Git worktrees |
+| `--global` | boolean | `false` | Force global registry scope regardless of current directory |
 
 ### complete
 
