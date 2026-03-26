@@ -1,9 +1,16 @@
 name: release-brew
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to process (vX.Y.Z). Defaults to v$(cat VERSION)."
+        required: false
+        type: string
+      recovery_ack:
+        description: "Type I_UNDERSTAND_FALLBACK to run this recovery-only workflow"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -14,8 +21,41 @@ jobs:
     env:
       ARCH: arm64
     steps:
+      - name: Validate fallback acknowledgement
+        run: |
+          if [[ "${{ inputs.recovery_ack }}" != "I_UNDERSTAND_FALLBACK" ]]; then
+            echo "release-brew fallback is recovery-only. Set recovery_ack to I_UNDERSTAND_FALLBACK."
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve release tag
+        run: |
+          INPUT_TAG="${{ inputs.tag }}"
+          if [[ -n "${INPUT_TAG}" ]]; then
+            TAG="${INPUT_TAG}"
+          else
+            VERSION_FROM_FILE="$(tr -d '[:space:]' < VERSION)"
+            TAG="v${VERSION_FROM_FILE}"
+          fi
+
+          if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid fallback tag '${TAG}'. Expected format vX.Y.Z"
+            exit 1
+          fi
+
+          echo "TAG=${TAG}" >> "$GITHUB_ENV"
+
+      - name: Validate tap token secret
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [[ -z "${HOMEBREW_TAP_TOKEN}" ]]; then
+            echo "Missing secret HOMEBREW_TAP_TOKEN with write access to EndersonPro/homebrew-flutree"
+            exit 1
+          fi
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -27,7 +67,7 @@ jobs:
 
       - name: Validate tag matches VERSION file
         run: |
-          ./scripts/check_version_contract.sh --tag "${GITHUB_REF_NAME}"
+          ./scripts/check_version_contract.sh --tag "${TAG}"
           VERSION="$(tr -d '[:space:]' < VERSION)"
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "TARBALL=flutree-${VERSION}-macos-${ARCH}.tar.gz" >> "$GITHUB_ENV"
@@ -55,18 +95,10 @@ jobs:
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG }}
           files: |
             dist/${{ env.TARBALL }}
             dist/${{ env.SHAFILE }}
-
-      - name: Validate tap token secret
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: |
-          if [[ -z "${HOMEBREW_TAP_TOKEN}" ]]; then
-            echo "Missing secret HOMEBREW_TAP_TOKEN with write access to EndersonPro/homebrew-flutree"
-            exit 1
-          fi
 
       - name: Checkout Homebrew tap repository
         uses: actions/checkout@v4
@@ -81,8 +113,9 @@ jobs:
           FORMULA_PATH="homebrew-tap/Formula/flutree.rb"
 
           test -f "$FORMULA_PATH"
-          sed -i.bak -E "s/^  version \".*\"$/  version \"$VERSION\"/" "$FORMULA_PATH"
-          sed -i.bak -E "s/^  sha256 \".*\"$/  sha256 \"$SHA256\"/" "$FORMULA_PATH"
+          sed -i.bak -E "s|^  version \".*\"$|  version \"$VERSION\"|" "$FORMULA_PATH"
+          sed -i.bak -E "s|^  url \".*\"$|  url \"https://github.com/EndersonPro/flutree/releases/download/v${VERSION}/flutree-${VERSION}-macos-${ARCH}.tar.gz\"|" "$FORMULA_PATH"
+          sed -i.bak -E "s|^  sha256 \".*\"$|  sha256 \"$SHA256\"|" "$FORMULA_PATH"
           rm -f "${FORMULA_PATH}.bak"
 
       - name: Commit and push tap formula update
@@ -97,3 +130,14 @@ jobs:
           fi
           git commit -m "chore: release flutree ${VERSION}"
           git push origin HEAD:main
+
+      - name: Write fallback release summary
+        if: always()
+        run: |
+          {
+            echo "## release-brew fallback summary"
+            echo "- TAG: ${TAG:-unknown}"
+            echo "- VERSION: ${VERSION:-unknown}"
+            echo "- TARBALL: ${TARBALL:-unknown}"
+            echo "- SHAFILE: ${SHAFILE:-unknown}"
+          } >> "$GITHUB_STEP_SUMMARY"
