@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/EndersonPro/flutree/internal/domain"
@@ -41,8 +42,14 @@ func (g *Gateway) CreateWorktree(repoRoot, path, branch, baseBranch string) erro
 }
 
 func (g *Gateway) CreateWorktreeNew(repoRoot, path, branch, startPoint string) error {
-	_, err := g.run(repoRoot, "worktree", "add", "-b", branch, path, startPoint)
-	return err
+	if _, err := g.run(repoRoot, "worktree", "add", "--detach", path, startPoint); err != nil {
+		return err
+	}
+	if _, err := g.run(path, "switch", "-c", branch); err != nil {
+		_ = g.RemoveWorktree(repoRoot, path, true)
+		return err
+	}
+	return nil
 }
 
 func (g *Gateway) CreateWorktreeExisting(repoRoot, path, branch string) error {
@@ -67,6 +74,60 @@ func (g *Gateway) BranchExists(repoRoot, branch string) (bool, error) {
 		return false, nil
 	}
 	return false, domain.NewError(domain.CategoryGit, 1, "Failed to check local branch existence.", "Branch: "+branch, err)
+}
+
+func (g *Gateway) SyncBranchWithRemote(repoRoot, branch string) error {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return domain.NewError(domain.CategoryInput, 2, "Target branch cannot be empty.", "Pass --branch with a non-empty value.", nil)
+	}
+
+	if _, err := g.run(repoRoot, "fetch", "--prune", "origin", branch); err != nil {
+		return domain.NewError(domain.CategoryGit, 1, "Failed to fetch branch from origin before creating worktree.", "Branch: "+branch, err)
+	}
+
+	remoteRef := "refs/remotes/origin/" + branch
+	if _, err := g.run(repoRoot, "rev-parse", "--verify", "--quiet", remoteRef); err != nil {
+		return nil
+	}
+
+	rangeSpec := "refs/heads/" + branch + "...refs/remotes/origin/" + branch
+	diff, err := g.run(repoRoot, "rev-list", "--left-right", "--count", rangeSpec)
+	if err != nil {
+		return domain.NewError(domain.CategoryGit, 1, "Failed to compare local branch against origin.", "Branch: "+branch, err)
+	}
+
+	parts := strings.Fields(strings.TrimSpace(diff))
+	if len(parts) != 2 {
+		return domain.NewError(domain.CategoryGit, 1, "Failed to parse branch divergence output.", "Branch: "+branch+" | Output: "+strings.TrimSpace(diff), nil)
+	}
+
+	ahead, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return domain.NewError(domain.CategoryGit, 1, "Failed to parse local-ahead counter for branch sync.", "Branch: "+branch, err)
+	}
+	behind, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return domain.NewError(domain.CategoryGit, 1, "Failed to parse local-behind counter for branch sync.", "Branch: "+branch, err)
+	}
+
+	if ahead > 0 && behind > 0 {
+		return domain.NewError(
+			domain.CategoryPrecondition,
+			3,
+			"Local branch '"+branch+"' diverged from origin.",
+			"Rebase/merge the branch manually, or run create without remote sync.",
+			nil,
+		)
+	}
+	if ahead > 0 || behind == 0 {
+		return nil
+	}
+
+	if _, err := g.run(repoRoot, "branch", "-f", branch, "origin/"+branch); err != nil {
+		return domain.NewError(domain.CategoryGit, 1, "Failed to fast-forward local branch from origin before creating worktree.", "Branch: "+branch, err)
+	}
+	return nil
 }
 
 func (g *Gateway) SyncBaseBranch(repoRoot, baseBranch string) (string, error) {

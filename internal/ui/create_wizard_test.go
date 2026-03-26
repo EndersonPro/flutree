@@ -59,6 +59,45 @@ func TestCreateWizardRequiresAtLeastOnePackage(t *testing.T) {
 	}
 }
 
+func TestCreateWizardRootEnterMovesToPackageStepWhenCandidatesExist(t *testing.T) {
+	repos := []domain.DiscoveredFlutterRepo{
+		{Name: "root-app", PackageName: "root_app", RepoRoot: "/repos/root-app"},
+		{Name: "core", PackageName: "core", RepoRoot: "/repos/core"},
+	}
+
+	m := newCreateWizardModel(CreateWizardInput{RootSelector: "root-app"}, repos)
+	m.step = stepRootRepo
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	newModel := updated.(createWizardModel)
+
+	if newModel.step != stepPackages {
+		t.Fatalf("expected to enter packages step, got %v", newModel.step)
+	}
+	if len(newModel.packageCandidates) == 0 {
+		t.Fatalf("expected package candidates to be available")
+	}
+}
+
+func TestCreateWizardRootEnterShowsPackageStepEvenWithoutCandidates(t *testing.T) {
+	repos := []domain.DiscoveredFlutterRepo{
+		{Name: "root-app", PackageName: "root_app", RepoRoot: "/repos/root-app"},
+	}
+
+	m := newCreateWizardModel(CreateWizardInput{RootSelector: "root-app"}, repos)
+	m.step = stepRootRepo
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	newModel := updated.(createWizardModel)
+
+	if newModel.step != stepPackages {
+		t.Fatalf("expected to stay in package step even without candidates, got %v", newModel.step)
+	}
+	if len(newModel.packageCandidates) != 0 {
+		t.Fatalf("expected zero package candidates")
+	}
+}
+
 func TestCreateWizardReviewSelectsDryRun(t *testing.T) {
 	repos := []domain.DiscoveredFlutterRepo{
 		{Name: "root-app", PackageName: "root_app", RepoRoot: "/repos/root-app"},

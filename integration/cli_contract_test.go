@@ -76,6 +76,11 @@ func runGit(t *testing.T, cwd string, args ...string) string {
 
 func initRepo(t *testing.T, path string) {
 	t.Helper()
+	initRepoWithPackageName(t, path, "sample")
+}
+
+func initRepoWithPackageName(t *testing.T, path, packageName string) {
+	t.Helper()
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +90,7 @@ func initRepo(t *testing.T, path string) {
 	if err := os.WriteFile(filepath.Join(path, "README.md"), []byte("seed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(path, "pubspec.yaml"), []byte("name: sample\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(path, "pubspec.yaml"), []byte("name: "+packageName+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, path, "add", "README.md", "pubspec.yaml")
@@ -148,6 +153,101 @@ func TestCLIHelpListsExpectedCommands(t *testing.T) {
 	}
 	if !strings.Contains(res.stdout, "create") || !strings.Contains(res.stdout, "list") || !strings.Contains(res.stdout, "complete") {
 		t.Fatalf("unexpected help output: %s", res.stdout)
+	}
+	if !strings.Contains(res.stdout, "flutree <subcommand> --help") {
+		t.Fatalf("expected subcommand help hint, got: %s", res.stdout)
+	}
+}
+
+func TestSubcommandHelpContracts(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside")
+	_ = os.MkdirAll(outside, 0o755)
+	env := testEnvWithPath(home, "")
+
+	cases := []struct {
+		name     string
+		args     []string
+		contains []string
+	}{
+		{
+			name:     "create long help",
+			args:     []string{"create", "--help"},
+			contains: []string{"flutree create <name> [options]", "--branch", "--root-repo", "--package", "--package-base", "--copy-root-file"},
+		},
+		{
+			name:     "create short help",
+			args:     []string{"create", "-h"},
+			contains: []string{"flutree create <name> [options]", "--branch", "--root-repo", "--package"},
+		},
+		{
+			name:     "add-repo help",
+			args:     []string{"add-repo", "--help"},
+			contains: []string{"flutree add-repo <workspace> [options]", "--repo", "--package-base", "--copy-root-file"},
+		},
+		{
+			name:     "complete help",
+			args:     []string{"complete", "--help"},
+			contains: []string{"flutree complete <name> [options]", "--yes", "--force"},
+		},
+		{
+			name:     "pubget help",
+			args:     []string{"pubget", "--help"},
+			contains: []string{"flutree pubget <name> [options]", "--force"},
+		},
+		{
+			name:     "list help",
+			args:     []string{"list", "--help"},
+			contains: []string{"flutree list [options]", "--all"},
+		},
+		{
+			name:     "update help",
+			args:     []string{"update", "--help"},
+			contains: []string{"flutree update [options]", "--check", "--apply"},
+		},
+		{
+			name:     "version help",
+			args:     []string{"version", "--help"},
+			contains: []string{"flutree version", "-h, --help"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := runCLI(t, bin, outside, env, "", tc.args...)
+			if res.code != 0 {
+				t.Fatalf("expected 0, got %d (%s)", res.code, res.stderr)
+			}
+			for _, want := range tc.contains {
+				if !strings.Contains(res.stdout, want) {
+					t.Fatalf("help output missing %q: %s", want, res.stdout)
+				}
+			}
+		})
+	}
+}
+
+func TestMissingPositionalStillFailsWithoutHelp(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside")
+	_ = os.MkdirAll(outside, 0o755)
+
+	create := runCLI(t, bin, outside, testEnv(home), "", "create")
+	if create.code != 2 {
+		t.Fatalf("expected 2, got %d (%s)", create.code, create.stderr)
+	}
+	if !strings.Contains(create.stderr, "Missing worktree name") {
+		t.Fatalf("unexpected create stderr: %s", create.stderr)
+	}
+
+	addRepo := runCLI(t, bin, outside, testEnv(home), "", "add-repo")
+	if addRepo.code != 2 {
+		t.Fatalf("expected 2, got %d (%s)", addRepo.code, addRepo.stderr)
+	}
+	if !strings.Contains(addRepo.stderr, "Missing workspace name") {
+		t.Fatalf("unexpected add-repo stderr: %s", addRepo.stderr)
 	}
 }
 
@@ -240,6 +340,57 @@ func TestInteractiveCreateWithYesStillRequiresToken(t *testing.T) {
 	}
 }
 
+func TestInteractiveCreatePromptsForRemoteSyncBeforeApply(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	repo := filepath.Join(scope, "root-app")
+	initRepo(t, repo)
+
+	res := runCLI(
+		t, bin, repo, testEnv(home), "APPLY\ny\n",
+		"create", "feature-login",
+		"--branch", "feature/login",
+		"--scope", scope,
+		"--root-repo", "root-app",
+	)
+	if res.code != 0 {
+		t.Fatalf("expected 0, got %d (%s)", res.code, res.stderr)
+	}
+	if !strings.Contains(res.stdout, "Update local branches from origin before creating worktrees?") {
+		t.Fatalf("expected sync confirmation prompt, got: %s", res.stdout)
+	}
+}
+
+func TestInteractiveCreateWithSyncDeclinedDoesNotFetchRemote(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	repo := filepath.Join(scope, "root-app")
+	initRepo(t, repo)
+
+	runGit(t, repo, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "missing-origin.git"))
+
+	res := runCLI(
+		t, bin, repo, testEnv(home), "APPLY\nN\n",
+		"create", "feature-login",
+		"--branch", "feature/login",
+		"--scope", scope,
+		"--root-repo", "root-app",
+	)
+	if res.code != 0 {
+		t.Fatalf("expected 0 when sync declined, got %d (%s)", res.code, res.stderr)
+	}
+	if strings.Contains(res.stderr, "Failed to sync base branch from origin before creating worktree") {
+		t.Fatalf("unexpected remote sync failure when user declined sync: %s", res.stderr)
+	}
+
+	rootWorktree := filepath.Join(home, "Documents", "worktrees", "feature-login", "root", "root-app")
+	if _, err := os.Stat(rootWorktree); err != nil {
+		t.Fatalf("expected root worktree to be created without remote sync, err=%v", err)
+	}
+}
+
 func TestNonInteractiveCreateRequiresExplicitReuseFlagWhenBranchExists(t *testing.T) {
 	bin := buildCLI(t)
 	home := t.TempDir()
@@ -285,6 +436,150 @@ func TestNonInteractiveCreateAllowsReuseWithExplicitFlag(t *testing.T) {
 	)
 	if res.code != 0 {
 		t.Fatalf("expected 0, got %d (%s)", res.code, res.stderr)
+	}
+}
+
+func TestCreateAcceptsPackageFlags(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	rootRepo := filepath.Join(scope, "root-app")
+	coreRepo := filepath.Join(scope, "core-pkg")
+	initRepoWithPackageName(t, rootRepo, "root_app")
+	initRepoWithPackageName(t, coreRepo, "core")
+
+	create := runCLI(
+		t, bin, rootRepo, testEnv(home), "",
+		"create", "feature-login",
+		"--branch", "feature/login",
+		"--scope", scope,
+		"--root-repo", "root-app",
+		"--package", "core-pkg",
+		"--package-base", "core-pkg=main",
+		"--yes",
+		"--non-interactive",
+	)
+	if create.code != 0 {
+		t.Fatalf("create failed: %d %s", create.code, create.stderr)
+	}
+
+	overridePath := filepath.Join(home, "Documents", "worktrees", "feature-login", "root", "root-app", "pubspec_overrides.yaml")
+	content, err := os.ReadFile(overridePath)
+	if err != nil {
+		t.Fatalf("failed to read override file: %v", err)
+	}
+	if !strings.Contains(string(content), "core:") || !strings.Contains(string(content), "packages/core-pkg") {
+		t.Fatalf("expected create override to include selected package, got: %s", string(content))
+	}
+}
+
+func TestCreateCopiesEnvFilesByDefault(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	repo := filepath.Join(scope, "root-app")
+	initRepoWithPackageName(t, repo, "root_app")
+
+	if err := os.WriteFile(filepath.Join(repo, ".env"), []byte("TOKEN=abc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".env.dev"), []byte("TOKEN=dev\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", ".env", ".env.dev")
+	runGit(t, repo, "commit", "-m", "add env fixtures")
+	runGit(t, repo, "push", "origin", "main")
+
+	create := runCLI(
+		t, bin, repo, testEnv(home), "",
+		"create", "feature-login",
+		"--branch", "feature/login",
+		"--scope", scope,
+		"--root-repo", "root-app",
+		"--yes",
+		"--non-interactive",
+	)
+	if create.code != 0 {
+		t.Fatalf("create failed: %d %s", create.code, create.stderr)
+	}
+
+	rootWorktree := filepath.Join(home, "Documents", "worktrees", "feature-login", "root", "root-app")
+	if _, err := os.Stat(filepath.Join(rootWorktree, ".env")); err != nil {
+		t.Fatalf("expected .env copied, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rootWorktree, ".env.dev")); err != nil {
+		t.Fatalf("expected .env.dev copied, err=%v", err)
+	}
+}
+
+func TestCreateBranchHasNoUpstreamTracking(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	repo := filepath.Join(scope, "root-app")
+	initRepoWithPackageName(t, repo, "root_app")
+
+	create := runCLI(
+		t, bin, repo, testEnv(home), "",
+		"create", "feature-login",
+		"--branch", "feature/login",
+		"--scope", scope,
+		"--root-repo", "root-app",
+		"--yes",
+		"--non-interactive",
+	)
+	if create.code != 0 {
+		t.Fatalf("create failed: %d %s", create.code, create.stderr)
+	}
+
+	rootWorktree := filepath.Join(home, "Documents", "worktrees", "feature-login", "root", "root-app")
+	upstream := strings.TrimSpace(runGit(t, rootWorktree, "for-each-ref", "--format=%(upstream:short)", "refs/heads/feature/login"))
+	if upstream != "" {
+		t.Fatalf("expected no upstream tracking for feature/login, got %q", upstream)
+	}
+}
+
+func TestAddRepoAttachesRepositoryAndUpdatesOverride(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	rootRepo := filepath.Join(scope, "root-app")
+	coreRepo := filepath.Join(scope, "core-pkg")
+	initRepoWithPackageName(t, rootRepo, "root_app")
+	initRepoWithPackageName(t, coreRepo, "core")
+
+	create := runCLI(
+		t, bin, rootRepo, testEnv(home), "",
+		"create", "feature-login",
+		"--branch", "feature/login",
+		"--scope", scope,
+		"--root-repo", "root-app",
+		"--yes",
+		"--non-interactive",
+	)
+	if create.code != 0 {
+		t.Fatalf("create failed: %d %s", create.code, create.stderr)
+	}
+
+	add := runCLI(
+		t, bin, rootRepo, testEnv(home), "",
+		"add-repo", "feature-login",
+		"--scope", scope,
+		"--repo", "core-pkg",
+		"--non-interactive",
+	)
+	if add.code != 0 {
+		t.Fatalf("add-repo failed: %d %s", add.code, add.stderr)
+	}
+
+	overridePath := filepath.Join(home, "Documents", "worktrees", "feature-login", "root", "root-app", "pubspec_overrides.yaml")
+	content, err := os.ReadFile(overridePath)
+	if err != nil {
+		t.Fatalf("failed to read override file: %v", err)
+	}
+	got := string(content)
+	if !strings.Contains(got, "core:") || !strings.Contains(got, "packages/core-pkg") {
+		t.Fatalf("override file missing attached repo entry: %s", got)
 	}
 }
 
