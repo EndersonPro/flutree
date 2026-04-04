@@ -46,6 +46,12 @@ go test ./...
 - If a target branch already exists, asks for explicit reuse confirmation (or requires `--reuse-existing-branch` in non-interactive mode).
 - Syncs the configured base branch before any new branch worktree creation.
 
+`flutree add-repo WORKSPACE [OPTIONS]`
+- Attaches additional repositories to an existing managed workspace.
+- In interactive mode, missing branch/base values can be entered per attached repo.
+- In non-interactive mode, the command never prompts and uses deterministic defaults (`source=<workspace branch>`, `base=main`) unless explicit overrides are provided.
+- `--sync-policy auto|always|never` controls pre-create remote sync behavior for attached repos.
+
 `flutree list [--all] [--global]`
 - Lists managed entries for the current repository when running inside a repo.
 - If running outside a repo, it falls back to the global registry view.
@@ -203,3 +209,22 @@ Dirty worktree on complete:
 Registry/persistence issues:
 - Error category: `persistence`
 - Fix: inspect `~/Documents/worktrees/.worktrees_registry.json` and correct invalid shape/duplicates.
+## add-repo
+
+Options:
+- `--scope PATH`: execution directory scope used to discover Flutter repositories (default: current directory).
+- `--repo TEXT`: repository selector to attach (repeatable).
+- `--package-branch-source TEXT`: per-repository target branch override in `<selector>=<branch>` format (repeatable).
+- `--package-base TEXT`: per-repository base branch override in `<selector>=<branch>` format (repeatable).
+- `--sync-policy TEXT`: sync behavior before creation: `auto` (interactive confirm, non-interactive false), `always`, `never`.
+- `--reuse-existing-branch`: allow non-interactive branch reuse when target branch already exists.
+- `--copy-root-file TEXT`: extra root-level file/pattern copied into each attached worktree (repeatable).
+- `--non-interactive`: disable prompts and enforce deterministic execution.
+
+Examples:
+
+```bash
+flutree add-repo feature-login --scope ~/code --repo core-pkg
+flutree add-repo feature-login --scope ~/code --repo core-pkg --package-branch-source core-pkg=feature/core --package-base core-pkg=main --sync-policy always --non-interactive --reuse-existing-branch
+flutree add-repo feature-login --scope ~/code --repo core-pkg --sync-policy never --non-interactive
+```

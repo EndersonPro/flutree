@@ -159,13 +159,24 @@ type CreateResult struct {
 	WorkspacePath    string
 }
 
+type AddRepoSyncPolicy string
+
+const (
+	AddRepoSyncAuto   AddRepoSyncPolicy = "auto"
+	AddRepoSyncAlways AddRepoSyncPolicy = "always"
+	AddRepoSyncNever  AddRepoSyncPolicy = "never"
+)
+
 type AddRepoInput struct {
-	WorkspaceName     string
-	ExecutionScope    string
-	RepoSelectors     []string
-	PackageBaseBranch map[string]string
-	RootFiles         []string
-	NonInteractive    bool
+	WorkspaceName       string
+	ExecutionScope      string
+	RepoSelectors       []string
+	PackageBranchSource map[string]string
+	PackageBaseBranch   map[string]string
+	RootFiles           []string
+	SyncPolicy          AddRepoSyncPolicy
+	ReuseExistingBranch bool
+	NonInteractive      bool
 }
 
 type AddRepoResult struct {

@@ -347,11 +347,15 @@ func runPubGet(args []string) error {
 func runAddRepo(args []string) error {
 	fs := newFlagSet("add-repo", printAddRepoHelp)
 	scope := fs.String("scope", ".", "Directory scope used to discover Flutter repositories.")
+	syncPolicy := fs.String("sync-policy", string(domain.AddRepoSyncAuto), "Sync policy before worktree creation: auto|always|never.")
 	nonInteractive := fs.Bool("non-interactive", false, "Disable prompts.")
+	reuseExistingBranch := fs.Bool("reuse-existing-branch", false, "Allow non-interactive reuse when target branch already exists.")
 	var repos multiFlag
+	var packageBranchSource multiFlag
 	var packageBase multiFlag
 	var copyRootFiles multiFlag
 	fs.Var(&repos, "repo", "Repository selector to attach. Repeatable.")
+	fs.Var(&packageBranchSource, "package-branch-source", "Override package target branch as <selector>=<branch>. Repeatable.")
 	fs.Var(&packageBase, "package-base", "Override package base branch as <selector>=<branch>. Repeatable.")
 	fs.Var(&copyRootFiles, "copy-root-file", "Extra root-level file/pattern to copy into each attached worktree. Repeatable.")
 	if len(args) > 0 && isHelpToken(args[0]) {
@@ -374,6 +378,20 @@ func runAddRepo(args []string) error {
 		return nil
 	}
 
+	parsedSyncPolicy, err := parseAddRepoSyncPolicy(*syncPolicy)
+	if err != nil {
+		return err
+	}
+
+	branchSourceMap := map[string]string{}
+	for _, entry := range packageBranchSource {
+		parts := strings.SplitN(strings.TrimSpace(entry), "=", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return domain.NewError(domain.CategoryInput, 2, "Invalid --package-branch-source format.", "Use --package-branch-source <selector>=<branch>.", nil)
+		}
+		branchSourceMap[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+	}
+
 	baseMap := map[string]string{}
 	for _, entry := range packageBase {
 		parts := strings.SplitN(strings.TrimSpace(entry), "=", 2)
@@ -385,12 +403,15 @@ func runAddRepo(args []string) error {
 
 	service := app.NewAddRepoService(&infraGit.Gateway{}, registry.NewDefault(), prompt.New())
 	result, err := service.Run(domain.AddRepoInput{
-		WorkspaceName:     workspaceName,
-		ExecutionScope:    *scope,
-		RepoSelectors:     repos,
-		PackageBaseBranch: baseMap,
-		RootFiles:         copyRootFiles,
-		NonInteractive:    *nonInteractive,
+		WorkspaceName:       workspaceName,
+		ExecutionScope:      *scope,
+		RepoSelectors:       repos,
+		PackageBranchSource: branchSourceMap,
+		PackageBaseBranch:   baseMap,
+		RootFiles:           copyRootFiles,
+		SyncPolicy:          parsedSyncPolicy,
+		ReuseExistingBranch: *reuseExistingBranch,
+		NonInteractive:      *nonInteractive,
 	})
 	if err != nil {
 		return err
@@ -555,10 +576,32 @@ func printAddRepoHelp() {
 	fmt.Println("Options:")
 	fmt.Println("  --scope <path>                    Directory scope used to discover Flutter repositories (default: .)")
 	fmt.Println("  --repo <selector>                 Repository selector to attach (repeatable)")
+	fmt.Println("  --package-branch-source <sel>=<branch>  Override package target branch (repeatable)")
 	fmt.Println("  --package-base <sel>=<branch>     Override package base branch (repeatable)")
+	fmt.Println("  --sync-policy <auto|always|never> Sync behavior before create (default: auto)")
+	fmt.Println("  --reuse-existing-branch           Allow non-interactive reuse when target branch already exists")
 	fmt.Println("  --copy-root-file <pattern>        Extra root-level file/pattern to copy into each attached worktree (repeatable)")
 	fmt.Println("  --non-interactive                 Disable prompts")
 	fmt.Println("  -h, --help                        Show this help")
+}
+
+func parseAddRepoSyncPolicy(value string) (domain.AddRepoSyncPolicy, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", string(domain.AddRepoSyncAuto):
+		return domain.AddRepoSyncAuto, nil
+	case string(domain.AddRepoSyncAlways):
+		return domain.AddRepoSyncAlways, nil
+	case string(domain.AddRepoSyncNever):
+		return domain.AddRepoSyncNever, nil
+	default:
+		return "", domain.NewError(
+			domain.CategoryInput,
+			2,
+			"Invalid --sync-policy value.",
+			"Use --sync-policy auto|always|never.",
+			nil,
+		)
+	}
 }
 
 func printListHelp() {
