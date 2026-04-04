@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.0](https://github.com/EndersonPro/flutree/compare/v0.12.0...v0.13.0) (2026-04-04)
+
+
+### Features
+
+* enhance add-repo service with sync policy and branching resolution ([b06b2f5](https://github.com/EndersonPro/flutree/commit/b06b2f5045efa70c3a73d36193bb6bcbe8956f7f))
+
 ## [0.12.0](https://github.com/EndersonPro/flutree/compare/v0.11.0...v0.12.0) (2026-03-26)
 
 
