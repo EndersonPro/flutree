@@ -113,21 +113,44 @@ func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, e
 	selectedRepos = dedupRepos(selectedRepos)
 	sort.Slice(selectedRepos, func(i, j int) bool { return selectedRepos[i].Name < selectedRepos[j].Name })
 
+	if input.NonInteractive && strings.TrimSpace(rootRecord.Branch) == "" {
+		return domain.AddRepoResult{}, domain.NewError(
+			domain.CategoryInput,
+			2,
+			"Cannot resolve target branch for attached repositories in non-interactive mode.",
+			"Root workspace branch is empty in registry. Provide --package-branch-source for each --repo or fix registry branch metadata.",
+			nil,
+		)
+	}
+	rootBranch := normalizeBranchName(rootRecord.Branch)
+
+	syncWithRemote, err := s.resolveSyncPolicy(input)
+	if err != nil {
+		return domain.AddRepoResult{}, err
+	}
+
 	createSvc := NewCreateService(s.git, s.registry, s.prompt)
 	newPlans := []domain.PlannedWorktree{}
+	hasExplicitPackageBase := len(input.PackageBaseBranch) > 0
 	for _, repo := range selectedRepos {
-		base := strings.TrimSpace(input.PackageBaseBranch[repo.Name])
-		if base == "" {
-			base = strings.TrimSpace(input.PackageBaseBranch[repo.RepoRoot])
+		branch, base, resolveErr := s.resolvePackageBranching(input, repo, rootBranch, hasExplicitPackageBase)
+		if resolveErr != nil {
+			return domain.AddRepoResult{}, resolveErr
 		}
-		if base == "" {
-			base = "main"
+		if input.NonInteractive && (strings.TrimSpace(branch) == "" || strings.TrimSpace(base) == "") {
+			return domain.AddRepoResult{}, domain.NewError(
+				domain.CategoryInput,
+				2,
+				"Non-interactive add-repo requires deterministic branch source and base values.",
+				"Provide --package-branch-source and --package-base explicitly for every selected repository.",
+				nil,
+			)
 		}
 		newPlans = append(newPlans, domain.PlannedWorktree{
 			Repo:       repo,
 			Role:       "package",
 			Path:       filepath.Join(containerPath, "packages", repo.Name),
-			Branch:     rootRecord.Branch,
+			Branch:     normalizeBranchName(branch),
 			BaseBranch: normalizeBranchName(base),
 		})
 	}
@@ -149,9 +172,23 @@ func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, e
 			rollback()
 			return domain.AddRepoResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to create package worktree directory.", plan.Path, err)
 		}
-		if err := createSvc.createPlannedWorktree(plan, domain.CreateApplyOptions{NonInteractive: input.NonInteractive}); err != nil {
+		if err := createSvc.createPlannedWorktree(plan, domain.CreateApplyOptions{
+			NonInteractive:      input.NonInteractive,
+			ReuseExistingBranch: input.ReuseExistingBranch,
+			SyncWithRemote:      syncWithRemote,
+		}); err != nil {
 			rollback()
-			return domain.AddRepoResult{}, err
+			message := "Failed to create attached worktree for repository '" + plan.Repo.Name + "'."
+			if strings.Contains(strings.ToLower(err.Error()), "sync") {
+				message = "Failed to sync repository '" + plan.Repo.Name + "' before attached worktree creation."
+			}
+			return domain.AddRepoResult{}, domain.NewError(
+				domain.CategoryGit,
+				1,
+				message,
+				"Branch: "+plan.Branch+" | Base: "+plan.BaseBranch,
+				err,
+			)
 		}
 		if err := copyRootFiles(plan.Repo.RepoRoot, plan.Path, rootFilePatterns); err != nil {
 			rollback()
@@ -222,6 +259,16 @@ func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, e
 		return domain.AddRepoResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to update .gitignore for pubspec_overrides.yaml.", filepath.Join(rootRecord.Path, ".gitignore"), err)
 	}
 
+	workspacePackages := make([]domain.PlannedWorktree, 0, len(allPackages))
+	for _, pkg := range allPackages {
+		workspacePackages = append(workspacePackages, domain.PlannedWorktree{Path: pkg.Path})
+	}
+	workspacePath := filepath.Join(containerPath, rootRecord.Name+".code-workspace")
+	if err := updateWorkspaceIfExists(workspacePath, rootRecord.Path, workspacePackages, containerPath); err != nil {
+		rollback()
+		return domain.AddRepoResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to update VSCode workspace file.", workspacePath, err)
+	}
+
 	added := make([]string, 0, len(newPlans))
 	for _, plan := range newPlans {
 		added = append(added, plan.Repo.Name)
@@ -232,6 +279,73 @@ func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, e
 		OverridePath:   overridePath,
 		SelectedBranch: rootRecord.Branch,
 	}, nil
+}
+
+func (s *AddRepoService) resolveSyncPolicy(input domain.AddRepoInput) (bool, error) {
+	policy := input.SyncPolicy
+	if policy == "" {
+		policy = domain.AddRepoSyncAuto
+	}
+	switch policy {
+	case domain.AddRepoSyncAlways:
+		return true, nil
+	case domain.AddRepoSyncNever:
+		return false, nil
+	case domain.AddRepoSyncAuto:
+		if input.NonInteractive {
+			return false, nil
+		}
+		confirmSync, err := s.prompt.Confirm(
+			"Update local branches from origin before creating attached worktrees?",
+			false,
+			false,
+		)
+		if err != nil {
+			return false, err
+		}
+		return confirmSync, nil
+	default:
+		return false, domain.NewError(domain.CategoryInput, 2, "Unknown add-repo sync policy.", "Use auto|always|never.", nil)
+	}
+}
+
+func (s *AddRepoService) resolvePackageBranching(input domain.AddRepoInput, repo domain.DiscoveredFlutterRepo, rootBranch string, hasExplicitPackageBase bool) (string, string, error) {
+	branch := strings.TrimSpace(input.PackageBranchSource[repo.Name])
+	if branch == "" {
+		branch = strings.TrimSpace(input.PackageBranchSource[repo.RepoRoot])
+	}
+	if branch == "" {
+		if !input.NonInteractive && !hasExplicitPackageBase {
+			resolved, err := s.prompt.AskText("Target branch for package '"+repo.Name+"'", rootBranch, false)
+			if err != nil {
+				return "", "", err
+			}
+			branch = resolved
+		} else {
+			branch = rootBranch
+		}
+	}
+
+	base := strings.TrimSpace(input.PackageBaseBranch[repo.Name])
+	if base == "" {
+		base = strings.TrimSpace(input.PackageBaseBranch[repo.RepoRoot])
+	}
+	if base == "" {
+		switch {
+		case hasExplicitPackageBase:
+			base = "main"
+		case input.NonInteractive:
+			base = "main"
+		default:
+			resolved, err := s.prompt.AskText("Base branch for package '"+repo.Name+"'", "main", false)
+			if err != nil {
+				return "", "", err
+			}
+			base = resolved
+		}
+	}
+
+	return branch, base, nil
 }
 
 func workspacePackageRecords(rootName string, records []domain.RegistryRecord) []domain.RegistryRecord {
@@ -264,4 +378,17 @@ func readPackageNameFromWorktree(repoPath string) string {
 		}
 	}
 	return filepath.Base(repoPath)
+}
+
+func updateWorkspaceIfExists(workspacePath, rootPath string, packages []domain.PlannedWorktree, containerPath string) error {
+	if _, err := os.Stat(workspacePath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	rootPlan := domain.PlannedWorktree{Path: rootPath}
+	folders := buildWorkspaceFolders(rootPlan, packages, containerPath)
+	return writeWorkspace(workspacePath, folders)
 }

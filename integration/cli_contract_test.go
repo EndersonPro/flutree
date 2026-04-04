@@ -184,7 +184,7 @@ func TestSubcommandHelpContracts(t *testing.T) {
 		{
 			name:     "add-repo help",
 			args:     []string{"add-repo", "--help"},
-			contains: []string{"flutree add-repo <workspace> [options]", "--repo", "--package-base", "--copy-root-file"},
+			contains: []string{"flutree add-repo <workspace> [options]", "--repo", "--package-base", "--package-branch-source", "--sync-policy", "--reuse-existing-branch", "--copy-root-file"},
 		},
 		{
 			name:     "complete help",
@@ -769,6 +769,140 @@ func TestAddRepoAttachesRepositoryAndUpdatesOverride(t *testing.T) {
 	got := string(content)
 	if !strings.Contains(got, "core:") || !strings.Contains(got, "packages/core-pkg") {
 		t.Fatalf("override file missing attached repo entry: %s", got)
+	}
+}
+
+func TestAddRepoSyncPolicyNeverSkipsRemoteSyncAndSucceeds(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	rootRepo := filepath.Join(scope, "root-app")
+	coreRepo := filepath.Join(scope, "core-pkg")
+	initRepoWithPackageName(t, rootRepo, "root_app")
+	initRepoWithPackageName(t, coreRepo, "core")
+
+	create := runCLI(
+		t, bin, rootRepo, testEnv(home), "",
+		"create", "feature-login",
+		"--branch", "feature/login",
+		"--scope", scope,
+		"--root-repo", "root-app",
+		"--yes",
+		"--non-interactive",
+	)
+	if create.code != 0 {
+		t.Fatalf("create failed: %d %s", create.code, create.stderr)
+	}
+
+	runGit(t, coreRepo, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "missing-origin.git"))
+
+	add := runCLI(
+		t, bin, rootRepo, testEnv(home), "",
+		"add-repo", "feature-login",
+		"--scope", scope,
+		"--repo", "core-pkg",
+		"--sync-policy", "never",
+		"--non-interactive",
+	)
+	if add.code != 0 {
+		t.Fatalf("expected sync-policy=never to succeed, got %d (%s)", add.code, add.stderr)
+	}
+}
+
+func TestAddRepoInteractiveAutoSyncPromptsBeforeAttach(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	rootRepo := filepath.Join(scope, "root-app")
+	coreRepo := filepath.Join(scope, "core-pkg")
+	initRepoWithPackageName(t, rootRepo, "root_app")
+	initRepoWithPackageName(t, coreRepo, "core")
+
+	create := runCLI(
+		t, bin, rootRepo, testEnv(home), "",
+		"create", "feature-login",
+		"--branch", "feature/login",
+		"--scope", scope,
+		"--root-repo", "root-app",
+		"--yes",
+		"--non-interactive",
+	)
+	if create.code != 0 {
+		t.Fatalf("create failed: %d %s", create.code, create.stderr)
+	}
+
+	add := runCLI(
+		t, bin, rootRepo, testEnv(home), "y\n",
+		"add-repo", "feature-login",
+		"--scope", scope,
+		"--repo", "core-pkg",
+		"--package-base", "core-pkg=main",
+	)
+	if add.code != 0 {
+		t.Fatalf("expected interactive add-repo success, got %d (%s)", add.code, add.stderr)
+	}
+	if !strings.Contains(add.stdout, "Update local branches from origin before creating attached worktrees?") {
+		t.Fatalf("expected sync prompt in interactive mode, got: %s", add.stdout)
+	}
+}
+
+func TestAddRepoNonInteractiveSyncAlwaysFailsFastAndRollsBack(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	rootRepo := filepath.Join(scope, "root-app")
+	coreRepo := filepath.Join(scope, "core-pkg")
+	initRepoWithPackageName(t, rootRepo, "root_app")
+	initRepoWithPackageName(t, coreRepo, "core")
+
+	create := runCLI(
+		t, bin, rootRepo, testEnv(home), "",
+		"create", "feature-login",
+		"--branch", "feature/login",
+		"--scope", scope,
+		"--root-repo", "root-app",
+		"--yes",
+		"--non-interactive",
+	)
+	if create.code != 0 {
+		t.Fatalf("create failed: %d %s", create.code, create.stderr)
+	}
+
+	runGit(t, coreRepo, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "missing-origin.git"))
+
+	add := runCLI(
+		t, bin, rootRepo, testEnv(home), "",
+		"add-repo", "feature-login",
+		"--scope", scope,
+		"--repo", "core-pkg",
+		"--sync-policy", "always",
+		"--non-interactive",
+	)
+	if add.code != 1 {
+		t.Fatalf("expected sync-policy=always to fail, got %d (%s)", add.code, add.stderr)
+	}
+	if !strings.Contains(add.stderr, "Failed to sync") {
+		t.Fatalf("expected actionable sync failure, got: %s", add.stderr)
+	}
+
+	pkgWorktree := filepath.Join(home, "Documents", "worktrees", "feature-login", "packages", "core-pkg")
+	if _, err := os.Stat(pkgWorktree); !os.IsNotExist(err) {
+		t.Fatalf("expected rollback to remove package worktree, stat err=%v", err)
+	}
+}
+
+func TestAddRepoRejectsInvalidPackageBranchSourceFormat(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside")
+	_ = os.MkdirAll(outside, 0o755)
+
+	res := runCLI(t, bin, outside, testEnv(home), "", "add-repo", "feature-login", "--package-branch-source", "core-pkg", "--non-interactive")
+	if res.code != 2 {
+		t.Fatalf("expected 2, got %d (%s)", res.code, res.stderr)
+	}
+	if !strings.Contains(res.stderr, "Invalid --package-branch-source format") {
+		t.Fatalf("unexpected stderr: %s", res.stderr)
 	}
 }
 
