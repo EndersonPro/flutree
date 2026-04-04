@@ -9,14 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var (
-	outputHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(uiAccentColor).Padding(0, 1)
-	outputBodyStyle   = lipgloss.NewStyle().PaddingLeft(2)
-	outputMutedStyle  = lipgloss.NewStyle().PaddingLeft(2).Foreground(uiMutedColor)
-)
-
 func RenderCreateDryPlan(plan domain.CreateDryPlan) {
-	fmt.Println(outputHeaderStyle.Render("Create Dry Plan"))
 	rows := [][]string{{
 		"root",
 		plan.Root.Repo.Name,
@@ -28,61 +21,117 @@ func RenderCreateDryPlan(plan domain.CreateDryPlan) {
 	for _, pkg := range plan.Packages {
 		rows = append(rows, []string{"package", pkg.Repo.Name, pkg.Repo.PackageName, pkg.Branch, pkg.BaseBranch, pkg.Path})
 	}
-	fmt.Println(outputBodyStyle.Render(renderTable([]string{"Role", "Repository", "Package", "Branch", "Base Branch", "Path"}, rows)))
-	fmt.Println(outputHeaderStyle.Render("Planned Files"))
+	worktreeTable := renderTable([]string{"Role", "Repository", "Package", "Branch", "Base Branch", "Path"}, rows)
+
 	fileRows := [][]string{{"Override", plan.OverridePath}}
 	if plan.WorkspacePath != "" {
 		fileRows = append(fileRows, []string{"Workspace", plan.WorkspacePath})
 	}
-	fmt.Println(outputBodyStyle.Render(renderTable([]string{"Type", "Path"}, fileRows)))
-	fmt.Println(outputMutedStyle.Render("Safety gate: No git/filesystem side effects have been executed yet."))
+	filesTable := renderTable([]string{"Type", "Path"}, fileRows)
+
+	planHeader := uiIconStyle.Render("📋") + uiHeaderStyle.Render("Create Dry Plan")
+	filesHeader := uiIconStyle.Render("📁") + uiSubheaderStyle.Render("Planned Files")
+	safetyMsg := uiIconStyle.Render("⚡") + uiMutedStyle.Render("Safety gate: No git/filesystem side effects have been executed yet.")
+
+	var b strings.Builder
+	b.WriteString(planHeader)
+	b.WriteString("\n")
+	b.WriteString(uiBodyStyle.Render(worktreeTable))
+	b.WriteString("\n")
+	b.WriteString(filesHeader)
+	b.WriteString("\n")
+	b.WriteString(uiBodyStyle.Render(filesTable))
+	b.WriteString("\n")
+	b.WriteString(safetyMsg)
+	fmt.Println(b.String())
 }
 
 func RenderCreateSuccess(result domain.CreateResult) {
-	fmt.Println(outputHeaderStyle.Render("Worktree Created"))
-	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("Name: %s", result.Record.Name)))
-	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("Branch: %s", result.Record.Branch)))
-	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("Path: %s", result.Record.Path)))
-	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("Packages: %s", strings.Join(result.SelectedPackages, ", "))))
+	var b strings.Builder
+	b.WriteString(KeyValue("Name", result.Record.Name))
+	b.WriteString("\n")
+	b.WriteString(KeyValue("Branch", result.Record.Branch))
+	b.WriteString("\n")
+	b.WriteString(KeyValue("Path", result.Record.Path))
+	b.WriteString("\n")
+	b.WriteString(KeyValue("Packages", strings.Join(result.SelectedPackages, ", ")))
 	if result.WorkspacePath != "" {
-		fmt.Println(outputBodyStyle.Render(fmt.Sprintf("Workspace: %s", result.WorkspacePath)))
+		b.WriteString("\n")
+		b.WriteString(KeyValue("Workspace", result.WorkspacePath))
 	}
-	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("Next: %s", result.NextStep)))
+	b.WriteString("\n")
+	b.WriteString(KeyValue("Next", result.NextStep))
+
+	header := uiIconStyle.Render("✅") + uiSuccessHeader.Render("Worktree Created")
+	fmt.Println(header)
+	fmt.Println(SuccessBox(b.String()))
 }
 
 func RenderDryRunOnly() {
-	fmt.Println(outputHeaderStyle.Render("Dry Plan Completed"))
-	fmt.Println(outputMutedStyle.Render("No filesystem or git changes were applied."))
+	var b strings.Builder
+	b.WriteString(uiMutedStyle.Render("No filesystem or git changes were applied."))
+
+	header := uiIconStyle.Render("ℹ️") + uiInfoHeader.Render("Dry Plan Completed")
+	fmt.Println(header)
+	fmt.Println(InfoBox(b.String()))
 }
 
 func RenderCompleteSuccess(result domain.CompleteResult) {
-	fmt.Println(outputHeaderStyle.Render("Worktree Completed"))
-	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("Name: %s", result.Record.Name)))
-	fmt.Println(outputBodyStyle.Render("Worktree: removed"))
+	var b strings.Builder
+	b.WriteString(KeyValue("Name", result.Record.Name))
+	b.WriteString("\n")
+	b.WriteString(KeyValue("Worktree", "removed"))
 	if result.StaleCleaned {
-		fmt.Println(outputBodyStyle.Render("Registry: stale entry cleaned (missing path)"))
+		b.WriteString("\n")
+		b.WriteString(KeyValue("Registry", "stale entry cleaned (missing path)"))
 	}
-	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("Branch: %s (retained)", result.Record.Branch)))
+	b.WriteString("\n")
+	b.WriteString(KeyValue("Branch", result.Record.Branch+" (retained)"))
+
+	header := uiIconStyle.Render("✅") + uiSuccessHeader.Render("Worktree Completed")
+	fmt.Println(header)
+	fmt.Println(SuccessBox(b.String()))
 }
 
 func RenderPubGetSuccess(result domain.PubGetResult) {
-	fmt.Println(outputHeaderStyle.Render("Pub Get Completed"))
-	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("Workspace: %s", result.WorkspaceName)))
+	var b strings.Builder
+	b.WriteString(KeyValue("Workspace", result.WorkspaceName))
 	if result.Force {
-		fmt.Println(outputBodyStyle.Render("Mode: force (clean + lock removal)"))
+		b.WriteString("\n")
+		b.WriteString(KeyValue("Mode", "force (clean + lock removal)"))
 	}
+	b.WriteString("\n")
+
 	for _, pkg := range result.Packages {
-		fmt.Println(outputBodyStyle.Render(fmt.Sprintf("package | %s | tool=%s | %s", pkg.Name, pkg.Tool, pkg.Path)))
+		b.WriteString(uiBodyStyle.Render(
+			lipgloss.NewStyle().Foreground(uiInfoColor).Render("•") + " " +
+				lipgloss.NewStyle().Render(fmt.Sprintf("package | %s | tool=%s | %s", pkg.Name, pkg.Tool, pkg.Path)),
+		))
+		b.WriteString("\n")
 	}
-	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("root    | %s | tool=%s | %s", result.Root.Name, result.Root.Tool, result.Root.Path)))
+	b.WriteString(uiBodyStyle.Render(
+		lipgloss.NewStyle().Foreground(uiSuccessColor).Render("★") + " " +
+			lipgloss.NewStyle().Render(fmt.Sprintf("root    | %s | tool=%s | %s", result.Root.Name, result.Root.Tool, result.Root.Path)),
+	))
+
+	header := uiIconStyle.Render("✅") + uiSuccessHeader.Render("Pub Get Completed")
+	fmt.Println(header)
+	fmt.Println(SuccessBox(b.String()))
 }
 
 func RenderAddRepoSuccess(result domain.AddRepoResult) {
-	fmt.Println(outputHeaderStyle.Render("Repository Attached"))
-	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("Workspace: %s", result.WorkspaceName)))
-	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("Branch: %s", result.SelectedBranch)))
-	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("Added repos: %s", strings.Join(result.AddedRepos, ", "))))
-	fmt.Println(outputBodyStyle.Render(fmt.Sprintf("Override updated: %s", result.OverridePath)))
+	var b strings.Builder
+	b.WriteString(KeyValue("Workspace", result.WorkspaceName))
+	b.WriteString("\n")
+	b.WriteString(KeyValue("Branch", result.SelectedBranch))
+	b.WriteString("\n")
+	b.WriteString(KeyValue("Added repos", strings.Join(result.AddedRepos, ", ")))
+	b.WriteString("\n")
+	b.WriteString(KeyValue("Override updated", result.OverridePath))
+
+	header := uiIconStyle.Render("✅") + uiSuccessHeader.Render("Repository Attached")
+	fmt.Println(header)
+	fmt.Println(SuccessBox(b.String()))
 }
 
 func RenderList(rows []domain.ListRow, includeUnmanaged bool) {
@@ -91,9 +140,15 @@ func RenderList(rows []domain.ListRow, includeUnmanaged bool) {
 		if includeUnmanaged {
 			next = "No managed or unmanaged worktrees found in discovered repositories."
 		}
-		fmt.Println(outputHeaderStyle.Render("Empty State"))
-		fmt.Println(outputBodyStyle.Render("No managed worktrees found."))
-		fmt.Println(outputBodyStyle.Render(next))
+
+		var b strings.Builder
+		b.WriteString(uiMutedStyle.Render("No managed worktrees found."))
+		b.WriteString("\n")
+		b.WriteString(uiMutedStyle.Render(next))
+
+		header := uiIconStyle.Render("📭") + uiHeaderStyle.Render("Empty State")
+		fmt.Println(header)
+		fmt.Println(InfoBox(b.String()))
 		return
 	}
 
@@ -107,7 +162,6 @@ func RenderList(rows []domain.ListRow, includeUnmanaged bool) {
 		return rows[i].Path < rows[j].Path
 	})
 
-	fmt.Println(outputHeaderStyle.Render("Managed Worktrees"))
 	tableRows := make([][]string, 0, len(rows))
 	for _, row := range rows {
 		displayName := row.Name
@@ -116,5 +170,8 @@ func RenderList(rows []domain.ListRow, includeUnmanaged bool) {
 		}
 		tableRows = append(tableRows, []string{displayName, row.Branch, row.Status, row.Path})
 	}
-	fmt.Println(outputBodyStyle.Render(renderTable([]string{"Name", "Branch", "Status", "Path"}, tableRows)))
+
+	header := uiIconStyle.Render("🌳") + uiHeaderStyle.Render("Managed Worktrees")
+	fmt.Println(header)
+	fmt.Println(uiBodyStyle.Render(renderStyledTable([]string{"Name", "Branch", "Status", "Path"}, tableRows, rows)))
 }
