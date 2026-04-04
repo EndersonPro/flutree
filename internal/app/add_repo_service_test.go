@@ -47,6 +47,9 @@ func (f *fakeAddRepoGit) BranchExists(repoRoot, branch string) (bool, error) {
 	}
 	return f.branchExists[repoRoot+"::"+branch], nil
 }
+func (f *fakeAddRepoGit) RemoteBranchExists(repoRoot, branch string) (bool, error) {
+	return false, nil
+}
 func (f *fakeAddRepoGit) SyncBranchWithRemote(repoRoot, branch string) error {
 	f.syncBranchCalls = append(f.syncBranchCalls, repoRoot+"::"+branch)
 	return nil
