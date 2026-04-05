@@ -5,9 +5,17 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 var loadingFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+var (
+	loadingSpinnerStyle = lipgloss.NewStyle().Foreground(uiAccentColor)
+	loadingSuccessStyle = lipgloss.NewStyle().Foreground(uiSuccessColor).Bold(true)
+	loadingErrorStyle   = lipgloss.NewStyle().Foreground(uiErrorColor).Bold(true)
+)
 
 func StartLoading(message string) func(success bool) {
 	if !isTerminalFile(os.Stdout) {
@@ -30,13 +38,13 @@ func StartLoading(message string) func(success bool) {
 				line := strings.Repeat(" ", len(message)+4)
 				fmt.Fprintf(os.Stdout, "\r%s\r", line)
 				if success {
-					fmt.Fprintf(os.Stdout, "✔ %s\n", message)
+					fmt.Fprintf(os.Stdout, "%s %s\n", loadingSuccessStyle.Render("✔"), message)
 				} else {
-					fmt.Fprintf(os.Stdout, "✖ %s\n", message)
+					fmt.Fprintf(os.Stdout, "%s %s\n", loadingErrorStyle.Render("✖"), message)
 				}
 				return
 			case <-ticker.C:
-				fmt.Fprintf(os.Stdout, "\r%s %s", loadingFrames[frame%len(loadingFrames)], message)
+				fmt.Fprintf(os.Stdout, "\r%s %s", loadingSpinnerStyle.Render(loadingFrames[frame%len(loadingFrames)]), message)
 				frame++
 			}
 		}
