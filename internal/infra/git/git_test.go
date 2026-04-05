@@ -28,3 +28,14 @@ func TestParseWorktreesParsesMultipleEntries(t *testing.T) {
 		t.Fatalf("expected locked maintenance, got %+v", entries[1])
 	}
 }
+
+func TestRemoteBranchExistsReturnsFalseForEmptyBranch(t *testing.T) {
+	g := &Gateway{}
+	exists, err := g.RemoteBranchExists("/tmp", "")
+	if err == nil {
+		t.Fatalf("expected error for empty branch")
+	}
+	if exists {
+		t.Fatalf("expected false for empty branch")
+	}
+}

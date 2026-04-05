@@ -76,6 +76,21 @@ func (g *Gateway) BranchExists(repoRoot, branch string) (bool, error) {
 	return false, domain.NewError(domain.CategoryGit, 1, "Failed to check local branch existence.", "Branch: "+branch, err)
 }
 
+func (g *Gateway) RemoteBranchExists(repoRoot, branch string) (bool, error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return false, domain.NewError(domain.CategoryInput, 2, "Target branch cannot be empty.", "Pass --branch or rely on the default branch contract.", nil)
+	}
+
+	// Fetch the branch from origin (prune stale refs)
+	if _, err := g.run(repoRoot, "fetch", "--prune", "origin", branch); err != nil {
+		return false, nil // fetch failure = treat as not existing
+	}
+	// Check if remote ref exists
+	_, err := g.run(repoRoot, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+branch)
+	return err == nil, nil
+}
+
 func (g *Gateway) SyncBranchWithRemote(repoRoot, branch string) error {
 	branch = strings.TrimSpace(branch)
 	if branch == "" {

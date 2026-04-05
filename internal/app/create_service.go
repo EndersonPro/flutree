@@ -276,6 +276,25 @@ func (s *CreateService) createPlannedWorktree(target domain.PlannedWorktree, opt
 		return nil
 	}
 
+	// Branch doesn't exist locally — check if it exists on origin
+	if options.SyncWithRemote {
+		remoteExists, err := s.git.RemoteBranchExists(target.Repo.RepoRoot, target.Branch)
+		if err != nil {
+			return err
+		}
+		if remoteExists {
+			// Fetch and set up local branch from remote
+			if err := s.git.SyncBranchWithRemote(target.Repo.RepoRoot, target.Branch); err != nil {
+				return err
+			}
+			// Create worktree from the now-existing local branch
+			if err := s.git.CreateWorktreeExisting(target.Repo.RepoRoot, target.Path, target.Branch); err != nil {
+				return err
+			}
+			return nil
+		}
+	}
+
 	startPoint := target.BaseBranch
 	if options.SyncWithRemote {
 		startPoint, err = s.git.SyncBaseBranch(target.Repo.RepoRoot, target.BaseBranch)

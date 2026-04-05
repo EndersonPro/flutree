@@ -12,17 +12,19 @@ import (
 )
 
 type fakeCreateGit struct {
-	repos            []domain.DiscoveredFlutterRepo
-	created          []string
-	createdExisting  []string
-	removed          []string
-	dirty            bool
-	worktree         map[string][]domain.GitWorktreeEntry
-	branchExistsByID map[string]bool
-	syncBranchCalls  []string
-	syncBranchErr    error
-	syncCalls        []string
-	syncErr          error
+	repos              []domain.DiscoveredFlutterRepo
+	created            []string
+	createdExisting    []string
+	removed            []string
+	dirty              bool
+	worktree           map[string][]domain.GitWorktreeEntry
+	branchExistsByID   map[string]bool
+	remoteBranchExists map[string]bool
+	syncBranchCalls    []string
+	syncBranchErr      error
+	syncCalls          []string
+	syncErr            error
+	remoteBranchErr    error
 }
 
 func (f *fakeCreateGit) EnsureRepo() (string, error) { return "", nil }
@@ -49,6 +51,15 @@ func (f *fakeCreateGit) BranchExists(repoRoot, branch string) (bool, error) {
 		return false, nil
 	}
 	return f.branchExistsByID[repoRoot+"::"+branch], nil
+}
+func (f *fakeCreateGit) RemoteBranchExists(repoRoot, branch string) (bool, error) {
+	if f.remoteBranchErr != nil {
+		return false, f.remoteBranchErr
+	}
+	if f.remoteBranchExists == nil {
+		return false, nil
+	}
+	return f.remoteBranchExists[repoRoot+"::"+branch], nil
 }
 func (f *fakeCreateGit) SyncBranchWithRemote(repoRoot, branch string) error {
 	f.syncBranchCalls = append(f.syncBranchCalls, repoRoot+"::"+branch)
@@ -841,6 +852,149 @@ func TestApplyReturnsErrorAndSkipsWorktreeCreationWhenSyncFails(t *testing.T) {
 	}
 	if len(g.createdExisting) != 0 {
 		t.Fatalf("expected no existing-branch worktree creation when sync fails, got=%v", g.createdExisting)
+	}
+}
+
+func TestApplyFetchesRemoteBranchWhenExistsOnOriginButNotLocally(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoRoot := filepath.Join(root, "root-app")
+	g := &fakeCreateGit{
+		repos: []domain.DiscoveredFlutterRepo{{Name: "root-app", RepoRoot: repoRoot, PackageName: "root_app"}},
+		remoteBranchExists: map[string]bool{
+			repoRoot + "::feature/remote-branch": true,
+		},
+	}
+	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
+
+	name := "remote-branch-fetch-" + strings.ReplaceAll(filepath.Base(root), "_", "-")
+	_ = os.RemoveAll(filepath.Join(destinationRoot(), normalizeWorktreeName(name)))
+
+	plan, err := svc.BuildDryPlan(domain.CreateInput{
+		Name:           name,
+		Branch:         "feature/remote-branch",
+		BaseBranch:     "main",
+		ExecutionScope: root,
+		RootSelector:   "root-app",
+		NonInteractive: true,
+	})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	if _, err := svc.Apply(plan, domain.CreateApplyOptions{NonInteractive: true, SyncWithRemote: true}); err != nil {
+		t.Fatalf("expected apply success: %v", err)
+	}
+	// Should have called SyncBranchWithRemote for the target branch (not just base sync)
+	if len(g.syncBranchCalls) != 1 || g.syncBranchCalls[0] != repoRoot+"::feature/remote-branch" {
+		t.Fatalf("expected branch sync call for remote branch, got=%v", g.syncBranchCalls)
+	}
+	// Should use CreateWorktreeExisting (branch now exists locally after sync)
+	if len(g.createdExisting) != 1 {
+		t.Fatalf("expected existing branch create path, got=%v", g.createdExisting)
+	}
+	// Should NOT have called base branch sync
+	if len(g.syncCalls) != 0 {
+		t.Fatalf("expected no base sync when remote branch exists, got=%v", g.syncCalls)
+	}
+	// Should NOT have called CreateWorktreeNew
+	if len(g.created) != 0 {
+		t.Fatalf("expected no new branch creation when remote branch exists, got=%v", g.created)
+	}
+}
+
+func TestApplyFallsBackToNewBranchWhenRemoteBranchDoesNotExist(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoRoot := filepath.Join(root, "root-app")
+	g := &fakeCreateGit{
+		repos: []domain.DiscoveredFlutterRepo{{Name: "root-app", RepoRoot: repoRoot, PackageName: "root_app"}},
+		// remoteBranchExists is nil — means no remote branches exist
+	}
+	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
+
+	name := "no-remote-fallback-" + strings.ReplaceAll(filepath.Base(root), "_", "-")
+	_ = os.RemoveAll(filepath.Join(destinationRoot(), normalizeWorktreeName(name)))
+
+	plan, err := svc.BuildDryPlan(domain.CreateInput{
+		Name:           name,
+		Branch:         "feature/new-from-base",
+		BaseBranch:     "main",
+		ExecutionScope: root,
+		RootSelector:   "root-app",
+		NonInteractive: true,
+	})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	if _, err := svc.Apply(plan, domain.CreateApplyOptions{NonInteractive: true, SyncWithRemote: true}); err != nil {
+		t.Fatalf("expected apply success: %v", err)
+	}
+	// Should have synced base branch
+	if len(g.syncCalls) != 1 || g.syncCalls[0] != repoRoot+"::main" {
+		t.Fatalf("expected base sync call, got=%v", g.syncCalls)
+	}
+	// Should have created new branch from base
+	if len(g.created) != 1 || !strings.HasPrefix(g.created[0], "new::") {
+		t.Fatalf("expected new branch create path, got=%v", g.created)
+	}
+	// Should NOT have called SyncBranchWithRemote for the target branch
+	if len(g.syncBranchCalls) != 0 {
+		t.Fatalf("expected no target branch sync when remote does not exist, got=%v", g.syncBranchCalls)
+	}
+}
+
+func TestApplySkipsRemoteCheckWhenSyncWithRemoteIsDisabled(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoRoot := filepath.Join(root, "root-app")
+	g := &fakeCreateGit{
+		repos: []domain.DiscoveredFlutterRepo{{Name: "root-app", RepoRoot: repoRoot, PackageName: "root_app"}},
+		remoteBranchExists: map[string]bool{
+			repoRoot + "::feature/some-branch": true,
+		},
+	}
+	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
+
+	name := "no-sync-skip-remote-" + strings.ReplaceAll(filepath.Base(root), "_", "-")
+	_ = os.RemoveAll(filepath.Join(destinationRoot(), normalizeWorktreeName(name)))
+
+	plan, err := svc.BuildDryPlan(domain.CreateInput{
+		Name:           name,
+		Branch:         "feature/some-branch",
+		BaseBranch:     "main",
+		ExecutionScope: root,
+		RootSelector:   "root-app",
+		NonInteractive: true,
+	})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+
+	// SyncWithRemote: false — should NOT check remote at all
+	if _, err := svc.Apply(plan, domain.CreateApplyOptions{NonInteractive: true}); err != nil {
+		t.Fatalf("expected apply success: %v", err)
+	}
+	// Should NOT have checked remote branch existence
+	// Should have created new branch from local base
+	if len(g.created) != 1 || !strings.HasPrefix(g.created[0], "new::") {
+		t.Fatalf("expected new branch create path, got=%v", g.created)
+	}
+	if !strings.HasSuffix(g.created[0], "::main") {
+		t.Fatalf("expected local base branch start point, got=%v", g.created)
+	}
+	if len(g.syncBranchCalls) != 0 {
+		t.Fatalf("expected no target branch sync when sync disabled, got=%v", g.syncBranchCalls)
+	}
+	if len(g.syncCalls) != 0 {
+		t.Fatalf("expected no base sync when sync disabled, got=%v", g.syncCalls)
 	}
 }
 
