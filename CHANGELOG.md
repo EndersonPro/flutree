@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.0](https://github.com/EndersonPro/flutree/compare/v0.14.0...v0.15.0) (2026-04-05)
+
+
+### Features
+
+* **sync:** fetch remote branch before creating worktree when it exists on origin ([d94d5f5](https://github.com/EndersonPro/flutree/commit/d94d5f581973379b8e1af07d533456b6fa7d3fb4))
+
 ## [0.14.0](https://github.com/EndersonPro/flutree/compare/v0.13.0...v0.14.0) (2026-04-04)
 
 
