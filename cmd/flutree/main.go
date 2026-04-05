@@ -439,6 +439,9 @@ func runVersion(args []string) error {
 	v := strings.TrimSpace(version)
 	if v == "" {
 		v = "dev"
+	} else {
+		v = strings.TrimPrefix(v, "v")
+		v = strings.TrimPrefix(v, "V")
 	}
 	fmt.Println(v)
 	return nil
