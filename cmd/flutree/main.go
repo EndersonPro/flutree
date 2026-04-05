@@ -440,9 +440,11 @@ func runVersion(args []string) error {
 	v := strings.TrimSpace(version)
 	if v == "" {
 		v = "dev"
+	} else {
+		v = strings.TrimPrefix(v, "v")
+		v = strings.TrimPrefix(v, "V")
 	}
-	versionStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#0F4C81", Dark: "#8BC6FF"})
-	fmt.Println(versionStyle.Render("🌳 flutree v" + v))
+	fmt.Println(v)
 	return nil
 }
 
