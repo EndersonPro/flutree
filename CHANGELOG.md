@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.1](https://github.com/EndersonPro/flutree/compare/v0.15.0...v0.15.1) (2026-04-05)
+
+
+### Bug Fixes
+
+* **version:** output clean semver for CI compatibility ([c07d2d9](https://github.com/EndersonPro/flutree/commit/c07d2d93ab8cda88dfd8cf1708f0bf68e2c9708c))
+* **version:** output clean semver for CI compatibility ([b5db14e](https://github.com/EndersonPro/flutree/commit/b5db14ef7b656f17173b25a94de33f0cd39240f7))
+
 ## [0.15.0](https://github.com/EndersonPro/flutree/compare/v0.14.0...v0.15.0) (2026-04-05)
 
 
