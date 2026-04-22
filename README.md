@@ -17,6 +17,7 @@
 - [🏗️ Commands Reference](#%EF%B8%8F-commands-reference)
   - [create](#create)
   - [add-repo](#add-repo)
+  - [config](#config)
   - [list](#list)
   - [complete](#complete)
   - [pubget](#pubget)
@@ -77,6 +78,8 @@ Run from inside a Git repository:
 ```bash
 flutree create feature-login --branch feature/login --root-repo repo --scope . --yes --non-interactive
 flutree add-repo feature-login --repo core-pkg --scope . --non-interactive
+flutree config set scope.root ~/code
+flutree config get scope.root
 flutree list
 flutree --version
 flutree update --check
@@ -102,6 +105,8 @@ Default destination root is `~/Documents/worktrees`, generating:
   - package selection is skipped in interactive mode,
   - `--no-package` conflicts with `--package` and `--package-base` (fail-fast input error).
 - `add-repo` is the command for attaching repositories after a workspace already exists.
+- `config set/get scope.root` lets you persist a default discovery scope for `create` and `add-repo`.
+- Discovery scope precedence is now: explicit `--scope` > persisted `scope.root` > `.`.
 - Before syncing branches from `origin` during `create`, the CLI now asks for confirmation:
   - **Yes** → sync from `origin` and continue with worktree creation.
   - **No** → skip remote sync entirely and continue from local refs.
@@ -183,6 +188,7 @@ flutree create <name> [options]
 ### add-repo
 
 Attaches additional repositories to an existing managed workspace and regenerates `pubspec_overrides.yaml`.
+In interactive TTY mode (without `--repo` and without `--non-interactive`) it launches a multiselect wizard with an explicit final review/apply gate.
 
 Usage:
 ```
@@ -192,10 +198,26 @@ flutree add-repo <workspace> [options]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--scope` | string | `.` | Directory scope used to discover Flutter repositories |
-| `--repo` | string |  | Repository selector to attach (repeatable). Required in non-interactive mode |
+| `--repo` | string |  | Repository selector to attach (repeatable). Required in non-interactive mode; bypasses interactive wizard when provided |
 | `--package-base` | string |  | Override package base branch as `<selector>=<branch>` (repeatable) |
 | `--copy-root-file` | string |  | Extra root-level file/pattern to copy into attached worktrees (repeatable). Default includes `.env` and `.env.*` |
-| `--non-interactive` | boolean | `false` | Disable prompts |
+| `--non-interactive` | boolean | `false` | Disable interactive wizard/prompts and enforce deterministic execution |
+
+### config
+
+Manages persisted CLI configuration.
+
+Usage:
+```
+flutree config set scope.root <path>
+flutree config get scope.root
+```
+
+Supported keys:
+
+| Key | Description |
+|-----|-------------|
+| `scope.root` | Default discovery root used by `create` and `add-repo` when `--scope` is omitted |
 
 ### list
 

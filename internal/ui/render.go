@@ -119,6 +119,27 @@ func RenderPubGetSuccess(result domain.PubGetResult) {
 	fmt.Println(SuccessBox(b.String()))
 }
 
+func RenderCleanSuccess(result domain.CleanResult) {
+	var b strings.Builder
+	b.WriteString(KeyValue("Worktree", result.Record.Name))
+	b.WriteString("\n")
+	b.WriteString(KeyValue("Path", result.Record.Path))
+	b.WriteString("\n")
+	b.WriteString(KeyValue("Tool", string(result.Tool)))
+	if result.Force {
+		b.WriteString("\n")
+		b.WriteString(KeyValue("Mode", "force"))
+	}
+	if result.LockRemoved {
+		b.WriteString("\n")
+		b.WriteString(KeyValue("Lock", "pubspec.lock removed"))
+	}
+
+	header := uiIconStyle.Render("✅") + uiSuccessHeader.Render("Worktree Clean Completed")
+	fmt.Println(header)
+	fmt.Println(SuccessBox(b.String()))
+}
+
 func RenderAddRepoSuccess(result domain.AddRepoResult) {
 	var b strings.Builder
 	b.WriteString(KeyValue("Workspace", result.WorkspaceName))

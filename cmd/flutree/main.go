@@ -10,6 +10,7 @@ import (
 
 	"github.com/EndersonPro/flutree/internal/app"
 	"github.com/EndersonPro/flutree/internal/domain"
+	infraConfig "github.com/EndersonPro/flutree/internal/infra/config"
 	infraGit "github.com/EndersonPro/flutree/internal/infra/git"
 	"github.com/EndersonPro/flutree/internal/infra/prompt"
 	infraPub "github.com/EndersonPro/flutree/internal/infra/pub"
@@ -42,8 +43,12 @@ func main() {
 		runtime.ExitOnError(runComplete(os.Args[2:]))
 	case "pubget":
 		runtime.ExitOnError(runPubGet(os.Args[2:]))
+	case "clean":
+		runtime.ExitOnError(runClean(os.Args[2:]))
 	case "update":
 		runtime.ExitOnError(runUpdate(os.Args[2:]))
+	case "config":
+		runtime.ExitOnError(runConfig(os.Args[2:]))
 	case "version", "--version":
 		runtime.ExitOnError(runVersion(os.Args[2:]))
 	case "--help", "-h", "help":
@@ -176,6 +181,13 @@ func runCreate(args []string) error {
 	}
 
 	genWorkspace := *workspace && !*noWorkspace
+	scopeFlagProvided := wasFlagProvided(fs, "scope")
+	configRepo := infraConfig.NewDefault()
+	scopeResolver := app.NewScopeResolver(configRepo)
+	resolvedScope, err := scopeResolver.Resolve(*scope, scopeFlagProvided)
+	if err != nil {
+		return err
+	}
 
 	gitGateway := &infraGit.Gateway{}
 	promptAdapter := prompt.New()
@@ -185,7 +197,7 @@ func runCreate(args []string) error {
 		Name:              name,
 		Branch:            branchName,
 		BaseBranch:        *baseBranch,
-		ExecutionScope:    *scope,
+		ExecutionScope:    resolvedScope,
 		RootSelector:      *rootRepo,
 		NoPackage:         *noPackage,
 		PackageSelectors:  packages,
@@ -199,7 +211,7 @@ func runCreate(args []string) error {
 	applyAfterDryRun := true
 	wizardUsed := false
 	if !*nonInteractive && ui.SupportsInteractiveWizard() {
-		repos, err := gitGateway.DiscoverFlutterRepos(*scope)
+		repos, err := gitGateway.DiscoverFlutterRepos(resolvedScope)
 		if err != nil {
 			return err
 		}
@@ -345,6 +357,31 @@ func runPubGet(args []string) error {
 	return nil
 }
 
+func runClean(args []string) error {
+	fs := newFlagSet("clean", printCleanHelp)
+	force := fs.Bool("force", false, "Remove pubspec.lock after clean.")
+	if len(args) > 0 && isHelpToken(args[0]) {
+		printCleanHelp()
+		return nil
+	}
+	helpRequested, err := parseFlagSet(fs, args, "Invalid clean arguments.", "")
+	if err != nil {
+		return err
+	}
+	if helpRequested {
+		return nil
+	}
+
+	service := app.NewCleanService(&infraGit.Gateway{}, registry.NewDefault(), &infraPub.Gateway{})
+	result, err := service.Run(domain.CleanInput{Force: *force})
+	if err != nil {
+		return err
+	}
+
+	ui.RenderCleanSuccess(result)
+	return nil
+}
+
 func runAddRepo(args []string) error {
 	fs := newFlagSet("add-repo", printAddRepoHelp)
 	scope := fs.String("scope", ".", "Directory scope used to discover Flutter repositories.")
@@ -383,6 +420,13 @@ func runAddRepo(args []string) error {
 	if err != nil {
 		return err
 	}
+	scopeFlagProvided := wasFlagProvided(fs, "scope")
+	configRepo := infraConfig.NewDefault()
+	scopeResolver := app.NewScopeResolver(configRepo)
+	resolvedScope, err := scopeResolver.Resolve(*scope, scopeFlagProvided)
+	if err != nil {
+		return err
+	}
 
 	branchSourceMap := map[string]string{}
 	for _, entry := range packageBranchSource {
@@ -403,9 +447,43 @@ func runAddRepo(args []string) error {
 	}
 
 	service := app.NewAddRepoService(&infraGit.Gateway{}, registry.NewDefault(), prompt.New())
+	wizardGate := ui.SupportsInteractiveWizard() && !*nonInteractive && len(repos) == 0
+	if wizardGate {
+		selectionContext, err := service.BuildSelectionContext(app.AddRepoSelectionContextInput{
+			WorkspaceName:  workspaceName,
+			ExecutionScope: resolvedScope,
+		})
+		if err != nil {
+			return err
+		}
+
+		wizardResult, err := ui.RunAddRepoWizard(ui.AddRepoWizardInput{
+			WorkspaceName:              workspaceName,
+			RootBranch:                 selectionContext.RootBranch,
+			InitialSelectors:           repos,
+			InitialPackageBranchSource: branchSourceMap,
+			InitialPackageBase:         baseMap,
+			InitialSyncPolicy:          parsedSyncPolicy,
+		}, selectionContext.Candidates)
+		if err != nil {
+			return err
+		}
+		if wizardResult.Cancelled || !wizardResult.Apply {
+			return domain.NewError(domain.CategoryInput, 2, "Add-repo cancelled before execution.", "Re-run add-repo to open the interactive flow again.", nil)
+		}
+
+		repos = append([]string{}, wizardResult.RepoSelectors...)
+		branchSourceMap = wizardResult.PackageBranchSource
+		baseMap = wizardResult.PackageBaseBranch
+		if !(wasFlagProvided(fs, "sync-policy") && parsedSyncPolicy != domain.AddRepoSyncAuto) {
+			parsedSyncPolicy = wizardResult.SyncPolicy
+		}
+		*nonInteractive = true
+	}
+
 	result, err := service.Run(domain.AddRepoInput{
 		WorkspaceName:       workspaceName,
-		ExecutionScope:      *scope,
+		ExecutionScope:      resolvedScope,
 		RepoSelectors:       repos,
 		PackageBranchSource: branchSourceMap,
 		PackageBaseBranch:   baseMap,
@@ -446,6 +524,42 @@ func runVersion(args []string) error {
 	}
 	fmt.Println(v)
 	return nil
+}
+
+func runConfig(args []string) error {
+	if len(args) == 0 || isHelpToken(args[0]) {
+		printConfigHelp()
+		return nil
+	}
+
+	configRepo := infraConfig.NewDefault()
+	service := app.NewConfigService(configRepo)
+
+	action := strings.TrimSpace(args[0])
+	switch action {
+	case "set":
+		if len(args) != 3 {
+			return domain.NewError(domain.CategoryInput, 2, "Invalid config set arguments.", "Usage: flutree config set scope.root <path>", nil)
+		}
+		stored, err := service.SetScopeRoot(args[1], args[2])
+		if err != nil {
+			return err
+		}
+		fmt.Println(stored)
+		return nil
+	case "get":
+		if len(args) != 2 {
+			return domain.NewError(domain.CategoryInput, 2, "Invalid config get arguments.", "Usage: flutree config get scope.root", nil)
+		}
+		value, err := service.GetScopeRoot(args[1])
+		if err != nil {
+			return err
+		}
+		fmt.Println(value)
+		return nil
+	default:
+		return domain.NewError(domain.CategoryInput, 2, "Invalid config action.", "Use `flutree config set scope.root <path>` or `flutree config get scope.root`.", nil)
+	}
 }
 
 func runUpdate(args []string) error {
@@ -496,9 +610,11 @@ func printHelp() {
 	fmt.Println(accent.Render("Commands:"))
 	fmt.Println("  " + cmdStyle.Render("create") + " <name> [options]        " + muted.Render("Create a new worktree with interactive wizard"))
 	fmt.Println("  " + cmdStyle.Render("add-repo") + " <workspace> [options]  " + muted.Render("Attach repositories to an existing worktree"))
+	fmt.Println("  " + cmdStyle.Render("config") + " <set|get> ...            " + muted.Render("Manage persisted CLI configuration"))
 	fmt.Println("  " + cmdStyle.Render("list") + " [options]                " + muted.Render("List managed worktrees"))
 	fmt.Println("  " + cmdStyle.Render("complete") + " <name> [options]      " + muted.Render("Complete and remove a worktree"))
 	fmt.Println("  " + cmdStyle.Render("pubget") + " <name> [--force]        " + muted.Render("Run pub get across workspace packages"))
+	fmt.Println("  " + cmdStyle.Render("clean") + " [--force]               " + muted.Render("Clean current managed worktree"))
 	fmt.Println("  " + cmdStyle.Render("update") + " [--check|--apply]       " + muted.Render("Check or apply brew updates"))
 	fmt.Println("  " + cmdStyle.Render("version") + "                       " + muted.Render("Show version"))
 	fmt.Println("")
@@ -547,6 +663,16 @@ func parseFlagSet(fs *flag.FlagSet, args []string, invalidMessage, hint string) 
 	return false, nil
 }
 
+func wasFlagProvided(fs *flag.FlagSet, name string) bool {
+	provided := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			provided = true
+		}
+	})
+	return provided
+}
+
 func isHelpToken(token string) bool {
 	switch strings.TrimSpace(token) {
 	case "-h", "--help":
@@ -590,20 +716,37 @@ func printAddRepoHelp() {
 	flagStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#0F4C81", Dark: "#8BC6FF"})
 
 	fmt.Println(accent.Render("🌳 flutree add-repo"))
-	fmt.Println(muted.Render("Attach repositories to an existing worktree."))
+	fmt.Println(muted.Render("Attach repositories to an existing worktree with interactive multiselect + final review when TTY is available."))
 	fmt.Println("")
 	fmt.Println(accent.Render("Usage:"))
 	fmt.Println("  flutree add-repo <workspace> [options]")
 	fmt.Println("")
 	fmt.Println(accent.Render("Options:"))
 	fmt.Println("  " + flagStyle.Render("--scope") + " <path>                    " + muted.Render("Directory scope for Flutter repo discovery (default: .)"))
-	fmt.Println("  " + flagStyle.Render("--repo") + " <selector>                 " + muted.Render("Repository selector to attach (repeatable)"))
+	fmt.Println("  " + flagStyle.Render("--repo") + " <selector>                 " + muted.Render("Repository selector to attach (repeatable). Skips interactive wizard when provided"))
 	fmt.Println("  " + flagStyle.Render("--package-branch-source") + " <sel>=<branch>  " + muted.Render("Override package target branch (repeatable)"))
 	fmt.Println("  " + flagStyle.Render("--package-base") + " <sel>=<branch>     " + muted.Render("Override package base branch (repeatable)"))
 	fmt.Println("  " + flagStyle.Render("--sync-policy") + " <auto|always|never> " + muted.Render("Sync behavior before create (default: auto)"))
 	fmt.Println("  " + flagStyle.Render("--reuse-existing-branch") + "           " + muted.Render("Allow non-interactive reuse of existing branch"))
 	fmt.Println("  " + flagStyle.Render("--copy-root-file") + " <pattern>        " + muted.Render("Extra root file/pattern to copy (repeatable)"))
-	fmt.Println("  " + flagStyle.Render("--non-interactive") + "                 " + muted.Render("Disable prompts"))
+	fmt.Println("  " + flagStyle.Render("--non-interactive") + "                 " + muted.Render("Disable interactive wizard/prompts and require deterministic selectors"))
+	fmt.Println("  " + flagStyle.Render("-h, --help") + "                        " + muted.Render("Show this help"))
+}
+
+func printConfigHelp() {
+	accent := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#0F4C81", Dark: "#8BC6FF"})
+	muted := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
+	flagStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#0F4C81", Dark: "#8BC6FF"})
+
+	fmt.Println(accent.Render("🌳 flutree config"))
+	fmt.Println(muted.Render("Manage persisted CLI configuration values."))
+	fmt.Println("")
+	fmt.Println(accent.Render("Usage:"))
+	fmt.Println("  flutree config set scope.root <path>")
+	fmt.Println("  flutree config get scope.root")
+	fmt.Println("")
+	fmt.Println(accent.Render("Supported keys:"))
+	fmt.Println("  " + flagStyle.Render("scope.root") + "                      " + muted.Render("Default discovery root for create/add-repo when --scope is omitted"))
 	fmt.Println("  " + flagStyle.Render("-h, --help") + "                        " + muted.Render("Show this help"))
 }
 
@@ -674,6 +817,22 @@ func printPubGetHelp() {
 	fmt.Println("")
 	fmt.Println(accent.Render("Options:"))
 	fmt.Println("  " + flagStyle.Render("--force") + "                           " + muted.Render("Clean cache and remove pubspec.lock before pub get"))
+	fmt.Println("  " + flagStyle.Render("-h, --help") + "                        " + muted.Render("Show this help"))
+}
+
+func printCleanHelp() {
+	accent := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#0F4C81", Dark: "#8BC6FF"})
+	muted := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
+	flagStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#0F4C81", Dark: "#8BC6FF"})
+
+	fmt.Println(accent.Render("🌳 flutree clean"))
+	fmt.Println(muted.Render("Clean the current managed worktree."))
+	fmt.Println("")
+	fmt.Println(accent.Render("Usage:"))
+	fmt.Println("  flutree clean [options]")
+	fmt.Println("")
+	fmt.Println(accent.Render("Options:"))
+	fmt.Println("  " + flagStyle.Render("--force") + "                           " + muted.Render("Also remove pubspec.lock"))
 	fmt.Println("  " + flagStyle.Render("-h, --help") + "                        " + muted.Render("Show this help"))
 }
 

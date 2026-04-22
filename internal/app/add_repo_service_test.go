@@ -858,3 +858,101 @@ func TestReadPackageNameFromWorktreeParsesNameAndFallsBack(t *testing.T) {
 		}
 	})
 }
+
+func TestBuildSelectionContextExcludesRootAndAttachedReposDeterministically(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	containerPath := filepath.Join(home, "Documents", "worktrees", "feature-login")
+	rootPath := filepath.Join(containerPath, "root", "root-app")
+	attachedPath := filepath.Join(containerPath, "packages", "core-pkg")
+	if err := os.MkdirAll(rootPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(attachedPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	rootRepo := filepath.Join(t.TempDir(), "root-repo")
+	coreRepo := filepath.Join(t.TempDir(), "core-repo")
+	designRepo := filepath.Join(t.TempDir(), "design-repo")
+	apiRepo := filepath.Join(t.TempDir(), "api-repo")
+
+	git := &fakeAddRepoGit{discovered: []domain.DiscoveredFlutterRepo{
+		{Name: "root-app", RepoRoot: rootRepo, PackageName: "root_app"},
+		{Name: "core-pkg", RepoRoot: coreRepo, PackageName: "core"},
+		{Name: "design-pkg", RepoRoot: designRepo, PackageName: "design"},
+		{Name: "api-pkg", RepoRoot: apiRepo, PackageName: "api"},
+	}}
+	registry := &fakeAddRepoRegistry{records: []domain.RegistryRecord{
+		{Name: "feature-login", Branch: "feature/login", Path: rootPath, RepoRoot: rootRepo, Status: "active"},
+		{Name: "feature-login__pkg__core-pkg", Branch: "feature/login", Path: attachedPath, RepoRoot: coreRepo, Status: "active"},
+	}}
+
+	service := NewAddRepoService(git, registry, &fakeAddRepoPrompt{})
+	ctx, err := service.BuildSelectionContext(AddRepoSelectionContextInput{
+		WorkspaceName:  "feature-login",
+		ExecutionScope: ".",
+	})
+	if err != nil {
+		t.Fatalf("expected context build success, got %v", err)
+	}
+
+	if ctx.RootBranch != "feature/login" {
+		t.Fatalf("expected root branch from registry, got %q", ctx.RootBranch)
+	}
+	if len(ctx.Candidates) != 2 {
+		t.Fatalf("expected only unattached candidates, got %+v", ctx.Candidates)
+	}
+	if ctx.Candidates[0].Name != "api-pkg" || ctx.Candidates[1].Name != "design-pkg" {
+		t.Fatalf("expected deterministic order by name, got %+v", ctx.Candidates)
+	}
+}
+
+func TestAddRepoNonInteractiveAcceptsWizardShapedPayloadWithRepoRootKeys(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	rootPath := filepath.Join(home, "Documents", "worktrees", "feature-login", "root", "root-app")
+	if err := os.MkdirAll(rootPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rootPath, "pubspec.yaml"), []byte("name: root_app\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rootRepo := filepath.Join(t.TempDir(), "root-repo")
+	coreRepo := filepath.Join(t.TempDir(), "core-repo")
+	git := &fakeAddRepoGit{discovered: []domain.DiscoveredFlutterRepo{
+		{Name: "root-app", RepoRoot: rootRepo, PackageName: "root_app"},
+		{Name: "core-pkg", RepoRoot: coreRepo, PackageName: "core"},
+	}}
+	registry := &fakeAddRepoRegistry{records: []domain.RegistryRecord{{
+		Name: "feature-login", Branch: "feature/login", Path: rootPath, RepoRoot: rootRepo, Status: "active",
+	}}}
+	prompt := &fakeAddRepoPrompt{}
+
+	service := NewAddRepoService(git, registry, prompt)
+	_, err := service.Run(domain.AddRepoInput{
+		WorkspaceName:       "feature-login",
+		ExecutionScope:      ".",
+		RepoSelectors:       []string{coreRepo, "core-pkg", coreRepo},
+		PackageBranchSource: map[string]string{coreRepo: "feature/core"},
+		PackageBaseBranch:   map[string]string{coreRepo: "release/1.0"},
+		SyncPolicy:          domain.AddRepoSyncNever,
+		NonInteractive:      true,
+	})
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+
+	if len(git.createNewCalls) != 1 {
+		t.Fatalf("expected deduped single worktree creation, got %v", git.createNewCalls)
+	}
+	if !strings.Contains(git.createNewCalls[0], "::feature/core::release/1.0") {
+		t.Fatalf("expected repo-root keyed branch/base from wizard payload, got %s", git.createNewCalls[0])
+	}
+	if len(prompt.askTextCalls) != 0 || len(prompt.confirmCalls) != 0 {
+		t.Fatalf("expected no prompts in deterministic non-interactive execution, ask=%v confirm=%v", prompt.askTextCalls, prompt.confirmCalls)
+	}
+}

@@ -1,52 +1,130 @@
 package ui
 
 import (
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/EndersonPro/flutree/internal/domain"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
+	"github.com/charmbracelet/x/term"
+	"github.com/mattn/go-runewidth"
 )
 
-// renderStyledTable builds a styled table with lipgloss-colored headers,
-// status-aware cell rendering, and Unicode separator lines.
-// Cell delimiters use ASCII | to maintain test compatibility.
+var defaultTerminalWidth = 120
+
+func terminalWidth() int {
+	// Respect COLUMNS env var (standard way to override terminal size in CI/non-TTY).
+	if cols := os.Getenv("COLUMNS"); cols != "" {
+		if w, err := strconv.Atoi(cols); err == nil && w > 0 {
+			return w
+		}
+	}
+	width, _, err := term.GetSize(os.Stdout.Fd())
+	if err != nil {
+		return defaultTerminalWidth
+	}
+	return width
+}
+
+// renderStyledTable builds a styled table using lipgloss/table with adaptive
+// colors, status-aware cell rendering, zebra striping, and terminal-width
+// awareness.
 func renderStyledTable(headers []string, rows [][]string, listRows []domain.ListRow) string {
 	if len(headers) == 0 {
 		return ""
 	}
 
-	widths := make([]int, len(headers))
-	for i, header := range headers {
-		widths[i] = len(header)
+	targetWidth := terminalWidth()
+
+	// Apply status-based styling to the Status column (index 2)
+	styledRows := make([][]string, len(rows))
+	for i, row := range rows {
+		styledRow := make([]string, len(row))
+		copy(styledRow, row)
+		if len(styledRow) > 2 && i < len(listRows) {
+			styledRow[2] = statusCell(styledRow[2], listRows[i].Status)
+		}
+		styledRows[i] = styledRow
 	}
 
-	normalizedRows := make([][]string, 0, len(rows))
+	// Truncate Path column first when terminal width is insufficient
+	styledRows = truncatePathFirst(headers, styledRows, targetWidth)
+
+	t := table.New().
+		Headers(headers...).
+		Rows(styledRows...).
+		StyleFunc(func(row, col int) lipgloss.Style {
+			if row == table.HeaderRow {
+				return uiTableHeaderStyle
+			}
+			if row%2 == 0 {
+				return uiTableRowStyle
+			}
+			return uiTableRowAltStyle
+		})
+
+	return t.Render()
+}
+
+// truncatePathFirst reduces the Path column content when the estimated total
+// table width exceeds the target width. Other columns are preserved.
+func truncatePathFirst(headers []string, rows [][]string, targetWidth int) [][]string {
+	if targetWidth <= 0 {
+		return rows
+	}
+
+	// Overhead: left border (1) + right border (1) + internal separators (cols-1) + cell padding (cols*2)
+	overhead := 2 + (len(headers) - 1) + (len(headers) * 2)
+
+	colWidths := make([]int, len(headers))
+	for i, h := range headers {
+		colWidths[i] = lipgloss.Width(h)
+	}
 	for _, row := range rows {
-		normalized := make([]string, len(headers))
-		for i := range headers {
-			if i < len(row) {
-				normalized[i] = row[i]
-			}
-			if len(normalized[i]) > widths[i] {
-				widths[i] = len(normalized[i])
+		for i, cell := range row {
+			if i < len(colWidths) {
+				if w := lipgloss.Width(cell); w > colWidths[i] {
+					colWidths[i] = w
+				}
 			}
 		}
-		normalizedRows = append(normalizedRows, normalized)
 	}
 
-	var b strings.Builder
-	writeTableSeparatorUnicode(&b, widths)
-	writeTableStyledHeader(&b, headers, widths)
-	writeTableSeparatorUnicode(&b, widths)
-	for i, row := range normalizedRows {
-		if i < len(listRows) {
-			writeTableStyledRow(&b, row, widths, listRows[i].Status, i%2 == 0)
-		} else {
-			writeTableStyledRow(&b, row, widths, "", i%2 == 0)
-		}
+	totalWidth := overhead
+	for _, w := range colWidths {
+		totalWidth += w
 	}
-	writeTableSeparatorUnicode(&b, widths)
-	return b.String()
+
+	if totalWidth <= targetWidth {
+		return rows
+	}
+
+	excess := totalWidth - targetWidth
+	pathIdx := 3 // Path is the 4th column
+
+	newRows := make([][]string, len(rows))
+	for i, row := range rows {
+		newRow := make([]string, len(row))
+		copy(newRow, row)
+		if pathIdx < len(row) {
+			pathWidth := lipgloss.Width(row[pathIdx])
+			if pathWidth > excess {
+				newWidth := pathWidth - excess
+				if newWidth < 1 {
+					newWidth = 1
+				}
+				// Truncate from the left so the basename (end of path) is preserved.
+				newRow[pathIdx] = runewidth.TruncateLeft(row[pathIdx], newWidth, "…")
+			} else {
+				newRow[pathIdx] = "…"
+			}
+		}
+		newRows[i] = newRow
+	}
+
+	return newRows
 }
 
 // renderTable builds a plain table with ASCII delimiters.
@@ -86,66 +164,11 @@ func renderTable(headers []string, rows [][]string) string {
 	return b.String()
 }
 
-func writeTableSeparatorUnicode(b *strings.Builder, widths []int) {
-	b.WriteString("├")
-	for _, width := range widths {
-		b.WriteString(strings.Repeat("─", width+2))
-		b.WriteString("┼")
-	}
-	result := b.String()
-	b.Reset()
-	b.WriteString(result[:len(result)-1])
-	b.WriteString("┤\n")
-}
-
 func writeTableSeparatorASCII(b *strings.Builder, widths []int) {
 	b.WriteString("+")
 	for _, width := range widths {
 		b.WriteString(strings.Repeat("-", width+2))
 		b.WriteString("+")
-	}
-	b.WriteString("\n")
-}
-
-func writeTableStyledHeader(b *strings.Builder, headers []string, widths []int) {
-	b.WriteString("|")
-	for i, header := range headers {
-		cell := uiTableHeaderStyle.Render(header)
-		b.WriteString(" ")
-		b.WriteString(cell)
-		cellWidth := lipgloss.Width(cell)
-		if cellWidth < widths[i] {
-			b.WriteString(strings.Repeat(" ", widths[i]-cellWidth))
-		}
-		if i < len(headers)-1 {
-			b.WriteString(" |")
-		} else {
-			b.WriteString(" |")
-		}
-	}
-	b.WriteString("\n")
-}
-
-func writeTableStyledRow(b *strings.Builder, values []string, widths []int, status string, isEven bool) {
-	b.WriteString("|")
-	for i := range widths {
-		value := ""
-		if i < len(values) {
-			value = values[i]
-		}
-
-		// Apply status-based coloring for the Status column
-		if i == 2 && status != "" {
-			value = statusCell(value, status)
-		}
-
-		cellWidth := lipgloss.Width(value)
-		b.WriteString(" ")
-		b.WriteString(value)
-		if cellWidth < widths[i] {
-			b.WriteString(strings.Repeat(" ", widths[i]-cellWidth))
-		}
-		b.WriteString(" |")
 	}
 	b.WriteString("\n")
 }
