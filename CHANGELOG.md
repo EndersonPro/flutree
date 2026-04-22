@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.1](https://github.com/EndersonPro/flutree/compare/v0.16.0...v0.16.1) (2026-04-22)
+
+
+### Bug Fixes
+
+* **app:** merge existing pubspec_overrides.yaml instead of overwriting ([f580642](https://github.com/EndersonPro/flutree/commit/f58064224ca02d562c101b5bc77d779b9f06abc7))
+
 ## [0.16.0](https://github.com/EndersonPro/flutree/compare/v0.15.1...v0.16.0) (2026-04-22)
 
 
