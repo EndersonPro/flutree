@@ -220,6 +220,8 @@ func initRepoWithPackageName(t *testing.T, path, packageName string) {
 func testEnv(home string) []string {
 	env := os.Environ()
 	env = append(env, "HOME="+home)
+	// Ensure terminal is wide enough for list table output in CI
+	env = append(env, "COLUMNS=200")
 	return env
 }
 
