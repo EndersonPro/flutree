@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.0](https://github.com/EndersonPro/flutree/compare/v0.15.1...v0.16.0) (2026-04-22)
+
+
+### Features
+
+* **app:** add clean/config services and add-repo wizard core ([7acdcdf](https://github.com/EndersonPro/flutree/commit/7acdcdf080e1d470c64beb8ad67186d696234b79))
+* **cli:** wire config, clean, interactive add-repo, and table UX ([c98a145](https://github.com/EndersonPro/flutree/commit/c98a1457803c97233b69cc319fbb86b9b1640e2a))
+
+
+### Bug Fixes
+
+* **test:** set COLUMNS=200 in testEnv for list table tests ([fd94410](https://github.com/EndersonPro/flutree/commit/fd944105e974f5f5d458c236a8a14b2f58d467bd))
+* **ui:** terminalWidth reads COLUMNS env var for CI/non-TTY compatibility ([1e671e9](https://github.com/EndersonPro/flutree/commit/1e671e98a774d49caff9e27b85ec7ff9475b475d))
+
 ## [0.15.1](https://github.com/EndersonPro/flutree/compare/v0.15.0...v0.15.1) (2026-04-05)
 
 
