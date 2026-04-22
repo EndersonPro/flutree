@@ -52,6 +52,11 @@ go test ./...
 - In non-interactive mode, the command never prompts and uses deterministic defaults (`source=<workspace branch>`, `base=main`) unless explicit overrides are provided.
 - `--sync-policy auto|always|never` controls pre-create remote sync behavior for attached repos.
 
+`flutree config set scope.root PATH` / `flutree config get scope.root`
+- Persists and reads the default discovery scope root.
+- Scope resolution precedence for `create` and `add-repo`: explicit `--scope` > persisted `scope.root` > `.`.
+- `scope.root` must be an existing reachable directory.
+
 `flutree list [--all] [--global]`
 - Lists managed entries for the current repository when running inside a repo.
 - If running outside a repo, it falls back to the global registry view.
@@ -81,6 +86,7 @@ Options:
 - `--branch, -b TEXT`: target branch name for the root worktree. If omitted, defaults to `feature/<normalized-name>`.
 - `--base-branch TEXT`: source branch for root worktree creation (default: `main`).
 - `--scope PATH`: execution directory scope used to discover Flutter repositories (default: current directory).
+  - if omitted, `create` uses persisted `scope.root` when configured.
 - `--root-repo TEXT`: explicit root repository selector for non-interactive usage.
 - `--no-package`: explicit root-only mode; skip package selection and package metadata prompts.
 - `--package, -p TEXT`: explicit package repository selector (repeatable).
@@ -213,13 +219,19 @@ Registry/persistence issues:
 
 Options:
 - `--scope PATH`: execution directory scope used to discover Flutter repositories (default: current directory).
-- `--repo TEXT`: repository selector to attach (repeatable).
+  - if omitted, `add-repo` uses persisted `scope.root` when configured.
+- `--repo TEXT`: repository selector to attach (repeatable). When omitted in interactive TTY mode, `add-repo` opens the multiselect wizard.
 - `--package-branch-source TEXT`: per-repository target branch override in `<selector>=<branch>` format (repeatable).
 - `--package-base TEXT`: per-repository base branch override in `<selector>=<branch>` format (repeatable).
 - `--sync-policy TEXT`: sync behavior before creation: `auto` (interactive confirm, non-interactive false), `always`, `never`.
 - `--reuse-existing-branch`: allow non-interactive branch reuse when target branch already exists.
 - `--copy-root-file TEXT`: extra root-level file/pattern copied into each attached worktree (repeatable).
-- `--non-interactive`: disable prompts and enforce deterministic execution.
+- `--non-interactive`: disable interactive wizard/prompts and enforce deterministic execution.
+
+Interactive flow (TTY + no `--repo` + no `--non-interactive`):
+- Step 1: repository multiselect (`↑/↓` or `j/k`, `space` to toggle).
+- Step 2: per-selected-repo source/base branch inputs.
+- Step 3: final review + explicit apply/cancel gate before any mutation.
 
 Examples:
 
@@ -227,4 +239,24 @@ Examples:
 flutree add-repo feature-login --scope ~/code --repo core-pkg
 flutree add-repo feature-login --scope ~/code --repo core-pkg --package-branch-source core-pkg=feature/core --package-base core-pkg=main --sync-policy always --non-interactive --reuse-existing-branch
 flutree add-repo feature-login --scope ~/code --repo core-pkg --sync-policy never --non-interactive
+```
+
+## config
+
+Supported key:
+- `scope.root`: default discovery root for `create` and `add-repo`.
+
+Examples:
+
+```bash
+flutree config set scope.root ~/code
+flutree config get scope.root
+```
+
+Persistence file:
+- `~/Documents/worktrees/.flutree_config.json`
+- JSON schema v1:
+
+```json
+{ "version": 1, "scope": { "root": "/absolute/path" } }
 ```

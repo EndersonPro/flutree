@@ -40,7 +40,7 @@ var (
 	// Table styles
 	uiTableHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(uiAccentColor)
 	uiTableRowStyle    = lipgloss.NewStyle()
-	uiTableRowAltStyle = lipgloss.NewStyle()
+	uiTableRowAltStyle = lipgloss.NewStyle().Background(lipgloss.AdaptiveColor{Light: "#F3F4F6", Dark: "#374151"})
 
 	// Badge and icon styles
 	uiBadgeStyle = lipgloss.NewStyle().Bold(true).Padding(0, 1).MarginRight(1)

@@ -1,13 +1,19 @@
 package integration_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/creack/pty"
 )
 
 func buildCLI(t *testing.T) string {
@@ -41,6 +47,12 @@ type runResult struct {
 	stderr string
 }
 
+type writerFunc func(p []byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) {
+	return f(p)
+}
+
 func runCLI(t *testing.T, bin, cwd string, env []string, stdin string, args ...string) runResult {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
@@ -61,6 +73,109 @@ func runCLI(t *testing.T, bin, cwd string, env []string, stdin string, args ...s
 		return runResult{code: code, stderr: string(out)}
 	}
 	return runResult{code: code, stdout: string(out)}
+}
+
+func runCLIWithPTY(t *testing.T, bin, cwd string, env []string, scriptedInputs []string, args ...string) runResult {
+	t.Helper()
+
+	cmd := exec.Command(bin, args...)
+	cmd.Dir = cwd
+	cmd.Env = append(append([]string{}, env...), "TERM=dumb", "COLORTERM=")
+
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		t.Fatalf("failed to start PTY command: %v", err)
+	}
+	t.Cleanup(func() { _ = ptmx.Close() })
+
+	var (
+		mu  sync.Mutex
+		buf bytes.Buffer
+	)
+	readDone := make(chan struct{})
+	go func() {
+		safeWriter := writerFunc(func(p []byte) (int, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			return buf.Write(p)
+		})
+		_, _ = io.Copy(safeWriter, ptmx)
+		close(readDone)
+	}()
+
+	readOutput := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return buf.String()
+	}
+	respondedCursorPos := false
+	respondedBackground := false
+	for _, step := range scriptedInputs {
+		parts := strings.SplitN(step, "::", 2)
+		if len(parts) != 2 {
+			t.Fatalf("invalid PTY script step %q, expected <waitFor>::<input>", step)
+		}
+		waitFor := parts[0]
+		input := parts[1]
+
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			output := readOutput()
+			if !respondedCursorPos && strings.Contains(output, "\x1b[6n") {
+				if _, err := ptmx.Write([]byte("\x1b[1;1R")); err != nil {
+					t.Fatalf("failed to answer cursor position probe: %v", err)
+				}
+				respondedCursorPos = true
+			}
+			if !respondedBackground && strings.Contains(output, "\x1b]11;?") {
+				if _, err := ptmx.Write([]byte("\x1b]11;rgb:0000/0000/0000\a")); err != nil {
+					t.Fatalf("failed to answer background color probe: %v", err)
+				}
+				respondedBackground = true
+			}
+			if strings.Contains(output, waitFor) {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("timeout waiting for %q in PTY output. Output so far: %s", waitFor, output)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+
+		if _, err := ptmx.Write([]byte(input)); err != nil {
+			t.Fatalf("failed to write PTY input %q: %v", input, err)
+		}
+	}
+
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- cmd.Wait()
+	}()
+
+	var waitErr error
+	select {
+	case waitErr = <-waitDone:
+	case <-time.After(10 * time.Second):
+		_ = cmd.Process.Kill()
+		waitErr = <-waitDone
+		t.Fatalf("timeout waiting for PTY command completion")
+	}
+
+	_ = ptmx.Close()
+	<-readDone
+
+	output := readOutput()
+	if waitErr != nil {
+		code := 1
+		if ee, ok := waitErr.(*exec.ExitError); ok && ee.ProcessState != nil {
+			code = ee.ProcessState.ExitCode()
+		} else if cmd.ProcessState != nil {
+			code = cmd.ProcessState.ExitCode()
+		}
+		return runResult{code: code, stderr: output}
+	}
+
+	return runResult{code: 0, stdout: output}
 }
 
 func runGit(t *testing.T, cwd string, args ...string) string {
@@ -151,7 +266,7 @@ func TestCLIHelpListsExpectedCommands(t *testing.T) {
 	if res.code != 0 {
 		t.Fatalf("expected 0, got %d (%s)", res.code, res.stderr)
 	}
-	if !strings.Contains(res.stdout, "create") || !strings.Contains(res.stdout, "list") || !strings.Contains(res.stdout, "complete") {
+	if !strings.Contains(res.stdout, "create") || !strings.Contains(res.stdout, "config") || !strings.Contains(res.stdout, "list") || !strings.Contains(res.stdout, "complete") || !strings.Contains(res.stdout, "clean") {
 		t.Fatalf("unexpected help output: %s", res.stdout)
 	}
 	if !strings.Contains(res.stdout, "flutree <subcommand> --help") {
@@ -171,6 +286,11 @@ func TestSubcommandHelpContracts(t *testing.T) {
 		args     []string
 		contains []string
 	}{
+		{
+			name:     "config help",
+			args:     []string{"config", "--help"},
+			contains: []string{"flutree config set scope.root <path>", "flutree config get scope.root", "scope.root"},
+		},
 		{
 			name:     "create long help",
 			args:     []string{"create", "--help"},
@@ -195,6 +315,11 @@ func TestSubcommandHelpContracts(t *testing.T) {
 			name:     "pubget help",
 			args:     []string{"pubget", "--help"},
 			contains: []string{"flutree pubget <name> [options]", "--force"},
+		},
+		{
+			name:     "clean help",
+			args:     []string{"clean", "--help"},
+			contains: []string{"flutree clean [options]", "--force"},
 		},
 		{
 			name:     "list help",
@@ -225,6 +350,225 @@ func TestSubcommandHelpContracts(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestConfigSetGetScopeRootRoundTrip(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := t.TempDir()
+
+	setRes := runCLI(t, bin, projectRoot(t), testEnv(home), "", "config", "set", "scope.root", scope)
+	if setRes.code != 0 {
+		t.Fatalf("expected config set success, got %d (%s)", setRes.code, setRes.stderr)
+	}
+	want := filepath.Clean(scope)
+	if strings.TrimSpace(setRes.stdout) != want {
+		t.Fatalf("expected normalized set output %q, got %q", want, setRes.stdout)
+	}
+
+	getRes := runCLI(t, bin, projectRoot(t), testEnv(home), "", "config", "get", "scope.root")
+	if getRes.code != 0 {
+		t.Fatalf("expected config get success, got %d (%s)", getRes.code, getRes.stderr)
+	}
+	if strings.TrimSpace(getRes.stdout) != want {
+		t.Fatalf("expected persisted get output %q, got %q", want, getRes.stdout)
+	}
+}
+
+func TestConfigRejectsUnsupportedKeys(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	setRes := runCLI(t, bin, projectRoot(t), testEnv(home), "", "config", "set", "other.key", "/tmp")
+	if setRes.code != 2 {
+		t.Fatalf("expected config set unsupported key to fail with 2, got %d (%s)", setRes.code, setRes.stderr)
+	}
+	if !strings.Contains(setRes.stderr, "Unsupported config key") {
+		t.Fatalf("unexpected set stderr: %s", setRes.stderr)
+	}
+
+	getRes := runCLI(t, bin, projectRoot(t), testEnv(home), "", "config", "get", "other.key")
+	if getRes.code != 2 {
+		t.Fatalf("expected config get unsupported key to fail with 2, got %d (%s)", getRes.code, getRes.stderr)
+	}
+	if !strings.Contains(getRes.stderr, "Unsupported config key") {
+		t.Fatalf("unexpected get stderr: %s", getRes.stderr)
+	}
+}
+
+func TestConfigSetRejectsInvalidAndNonDirectoryPaths(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	missing := filepath.Join(t.TempDir(), "missing")
+
+	missingRes := runCLI(t, bin, projectRoot(t), testEnv(home), "", "config", "set", "scope.root", missing)
+	if missingRes.code != 2 {
+		t.Fatalf("expected missing path failure with code 2, got %d (%s)", missingRes.code, missingRes.stderr)
+	}
+	if !strings.Contains(missingRes.stderr, "does not exist") {
+		t.Fatalf("unexpected missing-path stderr: %s", missingRes.stderr)
+	}
+
+	file := filepath.Join(t.TempDir(), "file.txt")
+	if err := os.WriteFile(file, []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nonDirRes := runCLI(t, bin, projectRoot(t), testEnv(home), "", "config", "set", "scope.root", file)
+	if nonDirRes.code != 2 {
+		t.Fatalf("expected non-directory failure with code 2, got %d (%s)", nonDirRes.code, nonDirRes.stderr)
+	}
+	if !strings.Contains(nonDirRes.stderr, "must be a directory") {
+		t.Fatalf("unexpected non-directory stderr: %s", nonDirRes.stderr)
+	}
+
+	if runtime.GOOS != "windows" {
+		unreachable := filepath.Join(t.TempDir(), "private")
+		if err := os.MkdirAll(unreachable, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(unreachable, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(unreachable, 0o700) })
+
+		unreachableRes := runCLI(t, bin, projectRoot(t), testEnv(home), "", "config", "set", "scope.root", unreachable)
+		if unreachableRes.code != 2 {
+			t.Fatalf("expected unreachable path failure with code 2, got %d (%s)", unreachableRes.code, unreachableRes.stderr)
+		}
+		if !strings.Contains(unreachableRes.stderr, "not reachable") {
+			t.Fatalf("unexpected unreachable-path stderr: %s", unreachableRes.stderr)
+		}
+	}
+}
+
+func TestCreateUsesPersistedScopeWhenFlagOmitted(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	repo := filepath.Join(scope, "root-app")
+	initRepo(t, repo)
+
+	setRes := runCLI(t, bin, projectRoot(t), testEnv(home), "", "config", "set", "scope.root", scope)
+	if setRes.code != 0 {
+		t.Fatalf("config set failed: %d (%s)", setRes.code, setRes.stderr)
+	}
+
+	create := runCLI(
+		t, bin, repo, testEnv(home), "",
+		"create", "feature-login",
+		"--root-repo", "root-app",
+		"--yes",
+		"--non-interactive",
+	)
+	if create.code != 0 {
+		t.Fatalf("create without --scope should use persisted root, got %d (%s)", create.code, create.stderr)
+	}
+}
+
+func TestCreateExplicitScopeOverridesPersistedScope(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	persistedScope := filepath.Join(t.TempDir(), "persisted")
+	explicitScope := filepath.Join(t.TempDir(), "explicit")
+	persistedRepo := filepath.Join(persistedScope, "persisted-root")
+	explicitRepo := filepath.Join(explicitScope, "explicit-root")
+	initRepo(t, persistedRepo)
+	initRepo(t, explicitRepo)
+
+	setRes := runCLI(t, bin, projectRoot(t), testEnv(home), "", "config", "set", "scope.root", persistedScope)
+	if setRes.code != 0 {
+		t.Fatalf("config set failed: %d (%s)", setRes.code, setRes.stderr)
+	}
+
+	create := runCLI(
+		t, bin, explicitRepo, testEnv(home), "",
+		"create", "feature-login",
+		"--scope", explicitScope,
+		"--root-repo", "explicit-root",
+		"--yes",
+		"--non-interactive",
+	)
+	if create.code != 0 {
+		t.Fatalf("create with explicit --scope should override persisted root, got %d (%s)", create.code, create.stderr)
+	}
+}
+
+func TestAddRepoUsesPersistedScopeWhenFlagOmitted(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	rootRepo := filepath.Join(scope, "root-app")
+	coreRepo := filepath.Join(scope, "core-pkg")
+	initRepoWithPackageName(t, rootRepo, "root_app")
+	initRepoWithPackageName(t, coreRepo, "core")
+
+	setRes := runCLI(t, bin, projectRoot(t), testEnv(home), "", "config", "set", "scope.root", scope)
+	if setRes.code != 0 {
+		t.Fatalf("config set failed: %d (%s)", setRes.code, setRes.stderr)
+	}
+
+	create := runCLI(
+		t, bin, rootRepo, testEnv(home), "",
+		"create", "feature-login",
+		"--root-repo", "root-app",
+		"--yes",
+		"--non-interactive",
+	)
+	if create.code != 0 {
+		t.Fatalf("create failed: %d %s", create.code, create.stderr)
+	}
+
+	add := runCLI(
+		t, bin, rootRepo, testEnv(home), "",
+		"add-repo", "feature-login",
+		"--repo", "core-pkg",
+		"--non-interactive",
+	)
+	if add.code != 0 {
+		t.Fatalf("add-repo without --scope should use persisted root, got %d (%s)", add.code, add.stderr)
+	}
+}
+
+func TestAddRepoExplicitScopeOverridesPersistedScope(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	persistedScope := filepath.Join(t.TempDir(), "persisted")
+	explicitScope := filepath.Join(t.TempDir(), "explicit")
+
+	persistedRoot := filepath.Join(persistedScope, "root-app")
+	explicitRoot := filepath.Join(explicitScope, "root-app")
+	explicitCore := filepath.Join(explicitScope, "core-pkg")
+	initRepoWithPackageName(t, persistedRoot, "root_app")
+	initRepoWithPackageName(t, explicitRoot, "root_app")
+	initRepoWithPackageName(t, explicitCore, "core")
+
+	setRes := runCLI(t, bin, projectRoot(t), testEnv(home), "", "config", "set", "scope.root", persistedScope)
+	if setRes.code != 0 {
+		t.Fatalf("config set failed: %d (%s)", setRes.code, setRes.stderr)
+	}
+
+	create := runCLI(
+		t, bin, explicitRoot, testEnv(home), "",
+		"create", "feature-login",
+		"--scope", explicitScope,
+		"--root-repo", "root-app",
+		"--yes",
+		"--non-interactive",
+	)
+	if create.code != 0 {
+		t.Fatalf("create failed: %d %s", create.code, create.stderr)
+	}
+
+	add := runCLI(
+		t, bin, explicitRoot, testEnv(home), "",
+		"add-repo", "feature-login",
+		"--scope", explicitScope,
+		"--repo", "core-pkg",
+		"--non-interactive",
+	)
+	if add.code != 0 {
+		t.Fatalf("add-repo with explicit --scope should override persisted scope, got %d (%s)", add.code, add.stderr)
 	}
 }
 
@@ -843,6 +1187,130 @@ func TestAddRepoInteractiveAutoSyncPromptsBeforeAttach(t *testing.T) {
 	}
 	if !strings.Contains(add.stdout, "Update local branches from origin before creating attached worktrees?") {
 		t.Fatalf("expected sync prompt in interactive mode, got: %s", add.stdout)
+	}
+}
+
+func TestAddRepoInteractiveWizardApplyAttachesSelectedRepo(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	rootRepo := filepath.Join(scope, "root-app")
+	coreRepo := filepath.Join(scope, "core-pkg")
+	initRepoWithPackageName(t, rootRepo, "root_app")
+	initRepoWithPackageName(t, coreRepo, "core")
+
+	create := runCLI(
+		t, bin, rootRepo, testEnv(home), "",
+		"create", "feature-login",
+		"--branch", "feature/login",
+		"--scope", scope,
+		"--root-repo", "root-app",
+		"--yes",
+		"--non-interactive",
+	)
+	if create.code != 0 {
+		t.Fatalf("create failed: %d %s", create.code, create.stderr)
+	}
+
+	add := runCLIWithPTY(t, bin, rootRepo, testEnv(home), []string{
+		"Step 1 - Select repositories::\r",
+		"Step 2 - Review and confirm::\r",
+		"Step 3 - Configure branches::\r",
+		"Step 3 - Configure branches::\r",
+	}, "add-repo", "feature-login", "--scope", scope)
+	if add.code != 0 {
+		t.Fatalf("expected interactive wizard apply success, got %d (%s)", add.code, add.stderr)
+	}
+
+	overridePath := filepath.Join(home, "Documents", "worktrees", "feature-login", "root", "root-app", "pubspec_overrides.yaml")
+	content, err := os.ReadFile(overridePath)
+	if err != nil {
+		t.Fatalf("failed to read override file: %v", err)
+	}
+	got := string(content)
+	if !strings.Contains(got, "core:") || !strings.Contains(got, "packages/core-pkg") {
+		t.Fatalf("override file missing attached repo entry after interactive apply: %s", got)
+	}
+}
+
+func TestAddRepoInteractiveWizardCancelFromReviewHasNoSideEffects(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	rootRepo := filepath.Join(scope, "root-app")
+	coreRepo := filepath.Join(scope, "core-pkg")
+	initRepoWithPackageName(t, rootRepo, "root_app")
+	initRepoWithPackageName(t, coreRepo, "core")
+
+	create := runCLI(
+		t, bin, rootRepo, testEnv(home), "",
+		"create", "feature-login",
+		"--branch", "feature/login",
+		"--scope", scope,
+		"--root-repo", "root-app",
+		"--yes",
+		"--non-interactive",
+	)
+	if create.code != 0 {
+		t.Fatalf("create failed: %d %s", create.code, create.stderr)
+	}
+
+	add := runCLIWithPTY(t, bin, rootRepo, testEnv(home), []string{
+		"Step 1 - Select repositories::\r",
+		"Step 2 - Review and confirm::\x1b[A\r",
+	}, "add-repo", "feature-login", "--scope", scope)
+	if add.code != 2 {
+		t.Fatalf("expected cancellation error code 2, got %d (%s)", add.code, add.stderr)
+	}
+	if !strings.Contains(add.stderr, "Add-repo cancelled before execution") {
+		t.Fatalf("expected cancellation guidance, got: %s", add.stderr)
+	}
+
+	pkgWorktree := filepath.Join(home, "Documents", "worktrees", "feature-login", "packages", "core-pkg")
+	if _, err := os.Stat(pkgWorktree); !os.IsNotExist(err) {
+		t.Fatalf("expected no package worktree after review cancel, stat err=%v", err)
+	}
+
+	overridePath := filepath.Join(home, "Documents", "worktrees", "feature-login", "root", "root-app", "pubspec_overrides.yaml")
+	content, err := os.ReadFile(overridePath)
+	if err == nil && strings.Contains(string(content), "core:") {
+		t.Fatalf("expected no override entry for canceled attach, got: %s", string(content))
+	}
+}
+
+func TestAddRepoNonInteractiveWithoutRepoSelectorsFailsDeterministically(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	rootRepo := filepath.Join(scope, "root-app")
+	coreRepo := filepath.Join(scope, "core-pkg")
+	initRepoWithPackageName(t, rootRepo, "root_app")
+	initRepoWithPackageName(t, coreRepo, "core")
+
+	create := runCLI(
+		t, bin, rootRepo, testEnv(home), "",
+		"create", "feature-login",
+		"--branch", "feature/login",
+		"--scope", scope,
+		"--root-repo", "root-app",
+		"--yes",
+		"--non-interactive",
+	)
+	if create.code != 0 {
+		t.Fatalf("create failed: %d %s", create.code, create.stderr)
+	}
+
+	add := runCLI(
+		t, bin, rootRepo, testEnv(home), "",
+		"add-repo", "feature-login",
+		"--scope", scope,
+		"--non-interactive",
+	)
+	if add.code != 2 {
+		t.Fatalf("expected deterministic non-interactive validation failure, got %d (%s)", add.code, add.stderr)
+	}
+	if !strings.Contains(add.stderr, "Repository selection is required in non-interactive mode") {
+		t.Fatalf("expected missing-selector guidance, got: %s", add.stderr)
 	}
 }
 

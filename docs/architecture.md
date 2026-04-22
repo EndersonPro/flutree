@@ -8,6 +8,7 @@
 - CLI handlers map arguments/options to typed input models.
 - Commands call services and then render output.
 - They do not execute Git subprocesses or parse files directly.
+- Discovery scope is resolved in command handlers with precedence: explicit `--scope` > persisted `scope.root` > `.`.
 
 ## 2) Domain Layer (`internal/domain`)
 - Typed contracts for inputs, registry documents, read models.
@@ -16,6 +17,7 @@
 ## 3) Adapter Layer (`internal/infra`)
 - `git/`: subprocess interaction and porcelain parsing.
 - `registry/`: global registry repository + integrity checks.
+- `config/`: user config repository (`~/Documents/worktrees/.flutree_config.json`) with versioned schema and atomic writes.
 - `prompt/`: confirmation boundary with non-interactive fail-fast behavior.
 
 ## 4) UI Layer (`internal/ui`)
