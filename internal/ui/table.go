@@ -32,6 +32,16 @@ func terminalWidth() int {
 // colors, status-aware cell rendering, zebra striping, and terminal-width
 // awareness.
 func renderStyledTable(headers []string, rows [][]string, listRows []domain.ListRow) string {
+	return renderStyledTableWithZebra(headers, rows, listRows, true)
+}
+
+// renderStyledTableNoZebra renders a styled table without zebra striping.
+// Used by create wizard review step for cleaner visual output.
+func renderStyledTableNoZebra(headers []string, rows [][]string) string {
+	return renderStyledTableWithZebra(headers, rows, nil, false)
+}
+
+func renderStyledTableWithZebra(headers []string, rows [][]string, listRows []domain.ListRow, zebra bool) string {
 	if len(headers) == 0 {
 		return ""
 	}
@@ -59,10 +69,13 @@ func renderStyledTable(headers []string, rows [][]string, listRows []domain.List
 			if row == table.HeaderRow {
 				return uiTableHeaderStyle
 			}
-			if row%2 == 0 {
-				return uiTableRowStyle
+			if zebra {
+				if row%2 == 0 {
+					return uiTableRowStyle
+				}
+				return uiTableRowAltStyle
 			}
-			return uiTableRowAltStyle
+			return uiTableRowStyle
 		})
 
 	return t.Render()

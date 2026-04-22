@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/EndersonPro/flutree/internal/domain"
@@ -264,9 +265,9 @@ func (m createWizardModel) View() string {
 			if i == m.pkgCursor {
 				cursor = ">"
 			}
-			marker := "[ ]"
+			marker := "○"
 			if m.pkgSelected[i] {
-				marker = "[x]"
+				marker = "◉"
 			}
 			b.WriteString(fmt.Sprintf("%s %s %s [%s]\n", cursor, marker, pkg.Name, pkg.PackageName))
 		}
@@ -522,15 +523,29 @@ func (m *createWizardModel) refreshPackageCandidates(preselected []string) {
 }
 
 func (m createWizardModel) progressLabel() string {
-	labels := []string{"1.Name", "2.Root", "3.Packages", "4.Branches", "5.Review"}
-	for i := range labels {
-		if i == int(m.step) {
-			labels[i] = wizardProgressActiveStyle.Render(labels[i])
-			continue
-		}
-		labels[i] = wizardProgressIdleStyle.Render(labels[i])
+	type stepInfo struct{ num int; label string }
+	steps := []stepInfo{
+		{1, "Name"},
+		{2, "Root"},
+		{3, "Packages"},
+		{4, "Branches"},
+		{5, "Review"},
 	}
-	return "\n" + strings.Join(labels, "  ")
+	var out strings.Builder
+	out.WriteString("\n")
+	for _, s := range steps {
+		prefix := "○"
+		style := wizardProgressIdleStyle
+		if int(m.step)+1 == s.num {
+			prefix = "●"
+			style = wizardProgressActiveStyle
+		}
+		out.WriteString(style.Render(prefix+" Step "+strconv.Itoa(s.num)+": "+s.label))
+		if s.num < len(steps) {
+			out.WriteString("  ")
+		}
+	}
+	return out.String()
 }
 
 func (m createWizardModel) branchesView() string {
@@ -569,7 +584,7 @@ func (m createWizardModel) reviewView() string {
 	var b strings.Builder
 	b.WriteString(wizardSectionStyle.Render("Step 5 - Final review"))
 	b.WriteString("\n")
-	b.WriteString(renderTable(
+	b.WriteString(renderStyledTableNoZebra(
 		[]string{"Setting", "Value"},
 		[][]string{
 			{"Workspace", m.name},
@@ -579,7 +594,7 @@ func (m createWizardModel) reviewView() string {
 	))
 	b.WriteString("\n")
 
-	b.WriteString(renderTable(
+	b.WriteString(renderStyledTableNoZebra(
 		[]string{"Role", "Repository", "Package", "Branch", "Base Branch"},
 		m.reviewRows(),
 	))

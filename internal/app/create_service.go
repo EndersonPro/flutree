@@ -173,7 +173,7 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 		created = append(created, pkg)
 	}
 
-	if err := os.WriteFile(plan.OverridePath, []byte(plan.OverrideContent), 0o644); err != nil {
+	if err := writeOverrideFile(plan.OverridePath, plan.Root.Path, plan.Packages); err != nil {
 		rollback()
 		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to write pubspec_overrides.yaml.", plan.OverridePath, err)
 	}
@@ -408,18 +408,153 @@ func repoLabel(repo domain.DiscoveredFlutterRepo) string {
 }
 
 func buildOverrideContent(root domain.PlannedWorktree, packages []domain.PlannedWorktree) string {
-	lines := []string{"dependency_overrides:"}
-	if len(packages) == 0 {
-		lines = append(lines, "  {}")
-		return strings.Join(lines, "\n") + "\n"
+	entries := buildOverrideEntriesMap(root, packages, nil)
+	return formatOverrideYAML(entries)
+}
+
+// OverrideEntry represents a single dependency_override entry.
+type OverrideEntry struct {
+	PackageName string
+	RelativePath string
+}
+
+// buildOverrideEntriesMap merges new packages with existing entries.
+// existingEntries may be nil. When package name collides, new wins.
+func buildOverrideEntriesMap(root domain.PlannedWorktree, packages []domain.PlannedWorktree, existingEntries map[string]string) map[string]string {
+	entries := make(map[string]string)
+	// Seed with existing entries first (will be overwritten by new if duplicate).
+	for pkg, relPath := range existingEntries {
+		entries[pkg] = relPath
 	}
+	// Add new packages (overwrites any existing with same package name).
 	for _, pkg := range packages {
 		rel, err := filepath.Rel(root.Path, pkg.Path)
 		if err != nil {
 			rel = pkg.Path
 		}
-		lines = append(lines, "  "+pkg.Repo.PackageName+":")
-		lines = append(lines, "    path: "+filepath.ToSlash(rel))
+		entries[pkg.Repo.PackageName] = filepath.ToSlash(rel)
+	}
+	return entries
+}
+
+// Merge existing overrides from pubspec.yaml into the overrides map.
+// Returns the updated entries map with pubspec overrides included.
+// Pubspec overrides are only moved if not already present in entries (new wins on conflict).
+func mergePubspecOverrides(entries map[string]string, pubspecPath string) map[string]string {
+	content, err := os.ReadFile(pubspecPath)
+	if err != nil {
+		return entries
+	}
+	parsing := false
+	var currentPkg string
+	for _, rawLine := range strings.Split(string(content), "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "dependency_overrides:") {
+			parsing = true
+			currentPkg = ""
+			continue
+		}
+		if parsing && strings.HasPrefix(line, ":") && !strings.HasPrefix(line, "  ") {
+			break
+		}
+		if parsing && strings.HasPrefix(line, "  ") && strings.TrimSpace(line) != "" {
+			pkgLine := strings.TrimSpace(line)
+			if strings.HasSuffix(pkgLine, ":") {
+				currentPkg = strings.TrimSpace(strings.TrimSuffix(pkgLine, ":"))
+				continue
+			}
+			if strings.HasPrefix(pkgLine, "path:") && currentPkg != "" {
+				relPath := strings.TrimSpace(strings.TrimPrefix(pkgLine, "path:"))
+				relPath = strings.Trim(relPath, "\"'")
+				if relPath != "" {
+					if _, exists := entries[currentPkg]; !exists {
+						entries[currentPkg] = relPath
+					}
+				}
+				currentPkg = ""
+			}
+		}
+	}
+	return entries
+}
+
+// readExistingOverrides reads the current pubspec_overrides.yaml and returns
+// a map of package name -> relative path. Returns nil if file doesn't exist.
+func readExistingOverrides(overridePath string) map[string]string {
+	content, err := os.ReadFile(overridePath)
+	if err != nil {
+		return nil
+	}
+	entries := make(map[string]string)
+	var currentPkg string
+	for _, rawLine := range strings.Split(string(content), "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if line == "dependency_overrides:" || strings.TrimSpace(line) == "{}" {
+			continue
+		}
+		if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "    ") {
+			if strings.HasSuffix(line, ":") {
+				currentPkg = strings.TrimSpace(strings.TrimSuffix(line, ":"))
+				continue
+			}
+			if strings.HasPrefix(line, "path:") && currentPkg != "" {
+				pathVal := strings.TrimSpace(strings.TrimPrefix(line, "path:"))
+				pathVal = strings.Trim(pathVal, "\"'")
+				if pathVal != "" {
+					entries[currentPkg] = pathVal
+				}
+				currentPkg = ""
+			}
+		}
+	}
+	return entries
+}
+
+// writeOverrideFile reads existing overrides, merges pubspec.yaml overrides,
+// adds new packages, and writes the merged result. Skips write if content unchanged.
+func writeOverrideFile(overridePath, rootPath string, newPackages []domain.PlannedWorktree) error {
+	pubspecPath := filepath.Join(rootPath, "pubspec.yaml")
+	entries := readExistingOverrides(overridePath)
+	if entries == nil {
+		entries = make(map[string]string)
+	}
+	entries = mergePubspecOverrides(entries, pubspecPath)
+	for _, pkg := range newPackages {
+		rel, err := filepath.Rel(rootPath, pkg.Path)
+		if err != nil {
+			rel = pkg.Path
+		}
+		entries[pkg.Repo.PackageName] = filepath.ToSlash(rel)
+	}
+	newContent := formatOverrideYAML(entries)
+	existingContent, err := os.ReadFile(overridePath)
+	if err == nil && string(existingContent) == newContent {
+		return nil
+	}
+	return os.WriteFile(overridePath, []byte(newContent), 0o644)
+}
+
+// formatOverrideYAML generates the YAML content from entries map,
+// sorted alphabetically for deterministic output.
+func formatOverrideYAML(entries map[string]string) string {
+	if len(entries) == 0 {
+		return "dependency_overrides:\n  {}\n"
+	}
+	var sorted []string
+	for pkg := range entries {
+		sorted = append(sorted, pkg)
+	}
+	sort.Strings(sorted)
+	lines := []string{"dependency_overrides:"}
+	for _, pkg := range sorted {
+		lines = append(lines, "  "+pkg+":")
+		lines = append(lines, "    path: "+entries[pkg])
 	}
 	return strings.Join(lines, "\n") + "\n"
 }
