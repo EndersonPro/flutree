@@ -192,10 +192,10 @@ func TestCreateWizardReviewViewUsesEnglishChoices(t *testing.T) {
 	if !strings.Contains(view, "Apply changes") {
 		t.Fatalf("expected english apply action in review view, got: %q", view)
 	}
-	if !regexp.MustCompile(`\|\s*Role\s*\|\s*Repository\s*\|\s*Package\s*\|\s*Branch\s*\|\s*Base Branch\s*\|`).MatchString(view) {
+	if !regexp.MustCompile(`[|│]\s*Role\s*[|│]\s*Repository\s*[|│]\s*Package\s*[|│]\s*Branch\s*[|│]\s*Base Branch\s*[|│]`).MatchString(view) {
 		t.Fatalf("expected review table header with role/branch/base columns, got: %q", view)
 	}
-	if !regexp.MustCompile(`\|\s*package\s*\|\s*core\s*\|\s*core\s*\|\s*feature/feature\s*\|\s*develop\s*\|`).MatchString(view) {
+	if !regexp.MustCompile(`[|│]\s*package\s*[|│]\s*core\s*[|│]\s*core\s*[|│]\s*feature/feature\s*[|│]\s*develop\s*[|│]`).MatchString(view) {
 		t.Fatalf("expected package detail row in review table, got: %q", view)
 	}
 }

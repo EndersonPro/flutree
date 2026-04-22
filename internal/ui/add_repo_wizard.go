@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/EndersonPro/flutree/internal/domain"
@@ -308,15 +309,27 @@ func (m addRepoWizardModel) updateReview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m addRepoWizardModel) progressLabel() string {
-	labels := []string{"1.Select repos", "2.Review", "3.Branches"}
-	for i := range labels {
-		if i == int(m.step) {
-			labels[i] = wizardProgressActiveStyle.Render(labels[i])
-			continue
-		}
-		labels[i] = wizardProgressIdleStyle.Render(labels[i])
+	type stepInfo struct{ num int; label string }
+	steps := []stepInfo{
+		{1, "Select repos"},
+		{2, "Review"},
+		{3, "Branches"},
 	}
-	return "\n" + strings.Join(labels, "  ")
+	var out strings.Builder
+	out.WriteString("\n")
+	for _, s := range steps {
+		prefix := "○"
+		style := wizardProgressIdleStyle
+		if int(m.step)+1 == s.num {
+			prefix = "●"
+			style = wizardProgressActiveStyle
+		}
+		out.WriteString(style.Render(prefix+" Step "+strconv.Itoa(s.num)+": "+s.label))
+		if s.num < len(steps) {
+			out.WriteString("  ")
+		}
+	}
+	return out.String()
 }
 
 func (m addRepoWizardModel) selectReposView() string {
@@ -328,9 +341,9 @@ func (m addRepoWizardModel) selectReposView() string {
 		if i == m.cursor {
 			cursor = ">"
 		}
-		marker := "[ ]"
+		marker := "○"
 		if m.selected[i] {
-			marker = "[x]"
+			marker = "◉"
 		}
 		b.WriteString(fmt.Sprintf("%s %s %s [%s] (%s)\n", cursor, marker, repo.Name, repo.PackageName, repo.RepoRoot))
 	}
