@@ -232,20 +232,8 @@ func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, e
 		})
 	}
 
-	rootPlan := domain.PlannedWorktree{
-		Repo: domain.DiscoveredFlutterRepo{
-			Name:        filepath.Base(rootRecord.Path),
-			RepoRoot:    rootRecord.RepoRoot,
-			PackageName: readPackageNameFromWorktree(rootRecord.Path),
-		},
-		Role:   "root",
-		Path:   rootRecord.Path,
-		Branch: rootRecord.Branch,
-	}
-
 	overridePath := filepath.Join(rootRecord.Path, overrideFileName)
-	overrideContent := buildOverrideContent(rootPlan, overridePackages)
-	if err := os.WriteFile(overridePath, []byte(overrideContent), 0o644); err != nil {
+	if err := writeOverrideFile(overridePath, rootRecord.Path, overridePackages); err != nil {
 		rollback()
 		return domain.AddRepoResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to update pubspec_overrides.yaml.", overridePath, err)
 	}
