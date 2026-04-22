@@ -25,6 +25,11 @@ type RegistryPort interface {
 	MarkCompleted(name string) (domain.RegistryRecord, error)
 }
 
+type ConfigPort interface {
+	Load() (domain.UserConfigDocument, error)
+	Save(domain.UserConfigDocument) error
+}
+
 type PromptPort interface {
 	Confirm(message string, nonInteractive, assumeYes bool) (bool, error)
 	ConfirmWithToken(message, token string, nonInteractive, assumeYes bool) (bool, error)

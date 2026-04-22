@@ -47,6 +47,15 @@ type RegistryDocument struct {
 	Records []RegistryRecord `json:"records"`
 }
 
+type UserScopeConfig struct {
+	Root string `json:"root,omitempty"`
+}
+
+type UserConfigDocument struct {
+	Version int             `json:"version"`
+	Scope   UserScopeConfig `json:"scope"`
+}
+
 type GitWorktreeEntry struct {
 	Path        string
 	Head        string
@@ -109,6 +118,17 @@ type PubGetResult struct {
 	Root          PubGetRepoResult
 	Packages      []PubGetRepoResult
 	Force         bool
+}
+
+type CleanInput struct {
+	Force bool
+}
+
+type CleanResult struct {
+	Record      RegistryRecord
+	Tool        PubTool
+	Force       bool
+	LockRemoved bool
 }
 
 type CreateInput struct {

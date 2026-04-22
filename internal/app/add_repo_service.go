@@ -15,8 +15,39 @@ type AddRepoService struct {
 	prompt   PromptPort
 }
 
+type AddRepoSelectionContextInput struct {
+	WorkspaceName  string
+	ExecutionScope string
+}
+
+type AddRepoSelectionContext struct {
+	WorkspaceName string
+	RootBranch    string
+	Candidates    []domain.DiscoveredFlutterRepo
+}
+
+type addRepoRuntimeContext struct {
+	rootRecord       domain.RegistryRecord
+	containerPath    string
+	existingPackages []domain.RegistryRecord
+	candidates       []domain.DiscoveredFlutterRepo
+}
+
 func NewAddRepoService(git GitPort, registry RegistryPort, prompt PromptPort) *AddRepoService {
 	return &AddRepoService{git: git, registry: registry, prompt: prompt}
+}
+
+func (s *AddRepoService) BuildSelectionContext(input AddRepoSelectionContextInput) (AddRepoSelectionContext, error) {
+	ctx, err := s.buildRuntimeContext(input)
+	if err != nil {
+		return AddRepoSelectionContext{}, err
+	}
+
+	return AddRepoSelectionContext{
+		WorkspaceName: ctx.rootRecord.Name,
+		RootBranch:    ctx.rootRecord.Branch,
+		Candidates:    append([]domain.DiscoveredFlutterRepo(nil), ctx.candidates...),
+	}, nil
 }
 
 func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, error) {
@@ -28,56 +59,15 @@ func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, e
 		return domain.AddRepoResult{}, domain.NewError(domain.CategoryInput, 2, "Add-repo requires root workspace name.", "Use root workspace name shown by `flutree list`.", nil)
 	}
 
-	records, err := s.registry.ListRecords()
+	ctx, err := s.buildRuntimeContext(AddRepoSelectionContextInput{WorkspaceName: workspaceName, ExecutionScope: input.ExecutionScope})
 	if err != nil {
 		return domain.AddRepoResult{}, err
 	}
 
-	rootRecord, ok := findRecordByName(records, workspaceName)
-	if !ok {
-		return domain.AddRepoResult{}, domain.NewError(domain.CategoryPrecondition, 3, "Managed workspace '"+workspaceName+"' was not found in registry.", "Run `flutree list` to inspect managed entries.", nil)
-	}
-	if _, isPackage := splitPackageRecordName(rootRecord.Name); isPackage {
-		return domain.AddRepoResult{}, domain.NewError(domain.CategoryInput, 2, "Add-repo requires root workspace name.", "Use root workspace name shown by `flutree list`.", nil)
-	}
-
-	containerPath, removeContainer, err := completionContainerPath(rootRecord)
-	if err != nil {
-		return domain.AddRepoResult{}, err
-	}
-	if !removeContainer {
-		return domain.AddRepoResult{}, domain.NewError(domain.CategoryPrecondition, 3, "Unable to determine workspace container path.", "Expected root worktree path in '<container>/root/<repository>'.", nil)
-	}
-
-	discovered, err := s.git.DiscoverFlutterRepos(input.ExecutionScope)
-	if err != nil {
-		return domain.AddRepoResult{}, err
-	}
-
-	rootRepo, ok := findRepoBySelector(discovered, rootRecord.RepoRoot)
-	if !ok {
-		return domain.AddRepoResult{}, domain.NewError(domain.CategoryPrecondition, 3, "Root repository is not discoverable in provided scope.", "Scope: "+input.ExecutionScope, nil)
-	}
-
-	existingPackages := workspacePackageRecords(rootRecord.Name, records)
-	existingRepoRoots := map[string]struct{}{filepath.Clean(rootRecord.RepoRoot): {}}
-	for _, rec := range existingPackages {
-		existingRepoRoots[filepath.Clean(rec.RepoRoot)] = struct{}{}
-	}
-
-	candidates := []domain.DiscoveredFlutterRepo{}
-	for _, repo := range discovered {
-		if filepath.Clean(repo.RepoRoot) == filepath.Clean(rootRepo.RepoRoot) {
-			continue
-		}
-		if _, exists := existingRepoRoots[filepath.Clean(repo.RepoRoot)]; exists {
-			continue
-		}
-		candidates = append(candidates, repo)
-	}
-	if len(candidates) == 0 {
-		return domain.AddRepoResult{}, domain.NewError(domain.CategoryPrecondition, 3, "No additional repositories available to attach.", "All discoverable repositories are already attached.", nil)
-	}
+	rootRecord := ctx.rootRecord
+	containerPath := ctx.containerPath
+	existingPackages := ctx.existingPackages
+	candidates := ctx.candidates
 
 	selectors := dedupStringsPreservingOrder(input.RepoSelectors)
 	if len(selectors) == 0 {
@@ -111,7 +101,12 @@ func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, e
 		selectedRepos = append(selectedRepos, repo)
 	}
 	selectedRepos = dedupRepos(selectedRepos)
-	sort.Slice(selectedRepos, func(i, j int) bool { return selectedRepos[i].Name < selectedRepos[j].Name })
+	sort.Slice(selectedRepos, func(i, j int) bool {
+		if selectedRepos[i].Name != selectedRepos[j].Name {
+			return selectedRepos[i].Name < selectedRepos[j].Name
+		}
+		return selectedRepos[i].RepoRoot < selectedRepos[j].RepoRoot
+	})
 
 	if input.NonInteractive && strings.TrimSpace(rootRecord.Branch) == "" {
 		return domain.AddRepoResult{}, domain.NewError(
@@ -278,6 +273,77 @@ func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, e
 		AddedRepos:     added,
 		OverridePath:   overridePath,
 		SelectedBranch: rootRecord.Branch,
+	}, nil
+}
+
+func (s *AddRepoService) buildRuntimeContext(input AddRepoSelectionContextInput) (addRepoRuntimeContext, error) {
+	workspaceName := strings.TrimSpace(input.WorkspaceName)
+	if workspaceName == "" {
+		return addRepoRuntimeContext{}, domain.NewError(domain.CategoryInput, 2, "Missing workspace name.", "Usage: flutree add-repo <workspace> --repo <selector>", nil)
+	}
+
+	records, err := s.registry.ListRecords()
+	if err != nil {
+		return addRepoRuntimeContext{}, err
+	}
+
+	rootRecord, ok := findRecordByName(records, workspaceName)
+	if !ok {
+		return addRepoRuntimeContext{}, domain.NewError(domain.CategoryPrecondition, 3, "Managed workspace '"+workspaceName+"' was not found in registry.", "Run `flutree list` to inspect managed entries.", nil)
+	}
+	if _, isPackage := splitPackageRecordName(rootRecord.Name); isPackage {
+		return addRepoRuntimeContext{}, domain.NewError(domain.CategoryInput, 2, "Add-repo requires root workspace name.", "Use root workspace name shown by `flutree list`.", nil)
+	}
+
+	containerPath, removeContainer, err := completionContainerPath(rootRecord)
+	if err != nil {
+		return addRepoRuntimeContext{}, err
+	}
+	if !removeContainer {
+		return addRepoRuntimeContext{}, domain.NewError(domain.CategoryPrecondition, 3, "Unable to determine workspace container path.", "Expected root worktree path in '<container>/root/<repository>'.", nil)
+	}
+
+	discovered, err := s.git.DiscoverFlutterRepos(input.ExecutionScope)
+	if err != nil {
+		return addRepoRuntimeContext{}, err
+	}
+
+	rootRepo, ok := findRepoBySelector(discovered, rootRecord.RepoRoot)
+	if !ok {
+		return addRepoRuntimeContext{}, domain.NewError(domain.CategoryPrecondition, 3, "Root repository is not discoverable in provided scope.", "Scope: "+input.ExecutionScope, nil)
+	}
+
+	existingPackages := workspacePackageRecords(rootRecord.Name, records)
+	existingRepoRoots := map[string]struct{}{filepath.Clean(rootRecord.RepoRoot): {}}
+	for _, rec := range existingPackages {
+		existingRepoRoots[filepath.Clean(rec.RepoRoot)] = struct{}{}
+	}
+
+	candidates := []domain.DiscoveredFlutterRepo{}
+	for _, repo := range discovered {
+		if filepath.Clean(repo.RepoRoot) == filepath.Clean(rootRepo.RepoRoot) {
+			continue
+		}
+		if _, exists := existingRepoRoots[filepath.Clean(repo.RepoRoot)]; exists {
+			continue
+		}
+		candidates = append(candidates, repo)
+	}
+	if len(candidates) == 0 {
+		return addRepoRuntimeContext{}, domain.NewError(domain.CategoryPrecondition, 3, "No additional repositories available to attach.", "All discoverable repositories are already attached.", nil)
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Name != candidates[j].Name {
+			return candidates[i].Name < candidates[j].Name
+		}
+		return candidates[i].RepoRoot < candidates[j].RepoRoot
+	})
+
+	return addRepoRuntimeContext{
+		rootRecord:       rootRecord,
+		containerPath:    containerPath,
+		existingPackages: existingPackages,
+		candidates:       candidates,
 	}, nil
 }
 
