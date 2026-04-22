@@ -2,6 +2,7 @@ package ui
 
 import (
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/EndersonPro/flutree/internal/domain"
@@ -14,6 +15,12 @@ import (
 var defaultTerminalWidth = 120
 
 func terminalWidth() int {
+	// Respect COLUMNS env var (standard way to override terminal size in CI/non-TTY).
+	if cols := os.Getenv("COLUMNS"); cols != "" {
+		if w, err := strconv.Atoi(cols); err == nil && w > 0 {
+			return w
+		}
+	}
 	width, _, err := term.GetSize(os.Stdout.Fd())
 	if err != nil {
 		return defaultTerminalWidth
