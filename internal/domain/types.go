@@ -13,11 +13,11 @@ const (
 )
 
 type AppError struct {
-	Category ErrorCategory
-	Message  string
-	Hint     string
-	Code     int
-	Cause    error
+	Category ErrorCategory `json:"category"`
+	Message  string        `json:"message"`
+	Hint     string        `json:"hint,omitempty"`
+	Code     int           `json:"code"`
+	Cause    error         `json:"-"`
 }
 
 func (e *AppError) Error() string { return e.Message }
@@ -67,12 +67,12 @@ type GitWorktreeEntry struct {
 }
 
 type ListRow struct {
-	Name         string
-	Branch       string
-	Path         string
-	RepoRoot     string
-	Status       string
-	PackageCount int
+	Name         string `json:"name"`
+	Branch       string `json:"branch"`
+	Path         string `json:"path"`
+	RepoRoot     string `json:"repo_root"`
+	Status       string `json:"status"`
+	PackageCount int    `json:"package_count"`
 }
 
 type ListInput struct {
@@ -88,10 +88,10 @@ type CompleteInput struct {
 }
 
 type CompleteResult struct {
-	Record        RegistryRecord
-	RemovedBranch bool
-	NextStep      string
-	StaleCleaned  bool
+	Record        RegistryRecord `json:"record"`
+	RemovedBranch bool           `json:"removed_branch"`
+	NextStep      string         `json:"next_step"`
+	StaleCleaned  bool           `json:"stale_cleaned"`
 }
 
 type PubTool string
@@ -107,17 +107,17 @@ type PubGetInput struct {
 }
 
 type PubGetRepoResult struct {
-	Name string
-	Path string
-	Tool PubTool
-	Role string
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Tool PubTool `json:"tool"`
+	Role string `json:"role"`
 }
 
 type PubGetResult struct {
-	WorkspaceName string
-	Root          PubGetRepoResult
-	Packages      []PubGetRepoResult
-	Force         bool
+	WorkspaceName string            `json:"workspace_name"`
+	Root          PubGetRepoResult  `json:"root"`
+	Packages      []PubGetRepoResult `json:"packages"`
+	Force         bool               `json:"force"`
 }
 
 type CleanInput struct {
@@ -125,10 +125,10 @@ type CleanInput struct {
 }
 
 type CleanResult struct {
-	Record      RegistryRecord
-	Tool        PubTool
-	Force       bool
-	LockRemoved bool
+	Record      RegistryRecord `json:"record"`
+	Tool        PubTool        `json:"tool"`
+	Force       bool           `json:"force"`
+	LockRemoved bool           `json:"lock_removed"`
 }
 
 type CreateInput struct {
@@ -173,10 +173,10 @@ type CreateApplyOptions struct {
 }
 
 type CreateResult struct {
-	Record           RegistryRecord
-	NextStep         string
-	SelectedPackages []string
-	WorkspacePath    string
+	Record           RegistryRecord `json:"record"`
+	NextStep         string          `json:"next_step"`
+	SelectedPackages []string        `json:"selected_packages"`
+	WorkspacePath    string          `json:"workspace_path"`
 }
 
 type AddRepoSyncPolicy string
@@ -200,10 +200,10 @@ type AddRepoInput struct {
 }
 
 type AddRepoResult struct {
-	WorkspaceName  string
-	AddedRepos     []string
-	OverridePath   string
-	SelectedBranch string
+	WorkspaceName  string   `json:"workspace_name"`
+	AddedRepos     []string `json:"added_repos"`
+	OverridePath   string   `json:"override_path"`
+	SelectedBranch string   `json:"selected_branch"`
 }
 
 type UpdateInput struct {
@@ -212,11 +212,11 @@ type UpdateInput struct {
 }
 
 type UpdateResult struct {
-	Mode         string
-	Outdated     bool
-	Current      string
-	Latest       string
-	UpgradeNotes string
+	Mode         string `json:"mode"`
+	Outdated     bool   `json:"outdated"`
+	Current      string `json:"current"`
+	Latest       string `json:"latest"`
+	UpgradeNotes string `json:"upgrade_notes,omitempty"`
 }
 
 func NormalizePath(path string) string {

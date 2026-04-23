@@ -1571,3 +1571,136 @@ func TestUpdateFailsWhenBrewUnavailable(t *testing.T) {
 		t.Fatalf("unexpected stderr: %s", res.stderr)
 	}
 }
+
+func TestVersionJSONFlag(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	res := runCLI(t, bin, projectRoot(t), testEnv(home), "", "version", "--json")
+	if res.code != 0 {
+		t.Fatalf("expected 0, got %d (%s)", res.code, res.stderr)
+	}
+
+	var out map[string]string
+	if err := json.Unmarshal([]byte(res.stdout), &out); err != nil {
+		t.Fatalf("invalid JSON output: %s\nerr: %v", res.stdout, err)
+	}
+	if _, ok := out["version"]; !ok {
+		t.Fatalf("expected 'version' key in JSON output: %s", res.stdout)
+	}
+}
+
+func TestListJSONFlag(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	writeRegistry(t, home, map[string]any{
+		"version": 1,
+		"records": []map[string]any{
+			{
+				"name":      "feature-login",
+				"branch":    "feature/login",
+				"path":      "/tmp/worktrees/feature-login",
+				"repo_root": "/tmp/repo",
+				"status":    "active",
+			},
+		},
+	})
+	outside := filepath.Join(t.TempDir(), "outside")
+	_ = os.MkdirAll(outside, 0o755)
+
+	res := runCLI(t, bin, outside, testEnv(home), "", "list", "--json")
+	if res.code != 0 {
+		t.Fatalf("expected 0, got %d (%s)", res.code, res.stderr)
+	}
+
+	// Should be a JSON array
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(res.stdout), &rows); err != nil {
+		t.Fatalf("invalid JSON output: %s\nerr: %v", res.stdout, err)
+	}
+	if len(rows) == 0 {
+		t.Fatalf("expected at least one row in JSON output: %s", res.stdout)
+	}
+	if _, ok := rows[0]["name"]; !ok {
+		t.Fatalf("expected 'name' key in first row: %s", res.stdout)
+	}
+}
+
+func TestConfigSetJSONFlag(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := t.TempDir()
+
+	res := runCLI(t, bin, projectRoot(t), testEnv(home), "", "config", "set", "scope.root", scope, "--json")
+	if res.code != 0 {
+		t.Fatalf("expected 0, got %d (%s)", res.code, res.stderr)
+	}
+
+	var out map[string]string
+	if err := json.Unmarshal([]byte(res.stdout), &out); err != nil {
+		t.Fatalf("invalid JSON output: %s\nerr: %v", res.stdout, err)
+	}
+	if _, ok := out["key"]; !ok {
+		t.Fatalf("expected 'key' key in JSON output: %s", res.stdout)
+	}
+	if _, ok := out["value"]; !ok {
+		t.Fatalf("expected 'value' key in JSON output: %s", res.stdout)
+	}
+}
+
+func TestConfigGetJSONFlag(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+	scope := t.TempDir()
+
+	// First set a value
+	setRes := runCLI(t, bin, projectRoot(t), testEnv(home), "", "config", "set", "scope.root", scope)
+	if setRes.code != 0 {
+		t.Fatalf("config set failed: %d (%s)", setRes.code, setRes.stderr)
+	}
+
+	// Now get with --json
+	res := runCLI(t, bin, projectRoot(t), testEnv(home), "", "config", "get", "scope.root", "--json")
+	if res.code != 0 {
+		t.Fatalf("expected 0, got %d (%s)", res.code, res.stderr)
+	}
+
+	var out map[string]string
+	if err := json.Unmarshal([]byte(res.stdout), &out); err != nil {
+		t.Fatalf("invalid JSON output: %s\nerr: %v", res.stdout, err)
+	}
+	if out["key"] != "scope.root" {
+		t.Fatalf("expected key 'scope.root', got: %s", out["key"])
+	}
+	if out["value"] == "" {
+		t.Fatalf("expected non-empty value in JSON output: %s", res.stdout)
+	}
+}
+
+func TestErrorJSONOutput(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	// Create a valid git repo to run create inside
+	scope := t.TempDir()
+	repo := filepath.Join(scope, "root-app")
+	initRepo(t, repo)
+
+	// Test that errors output as JSON when --json is set
+	// Use --non-interactive with missing --root-repo to trigger a validation error
+	res := runCLI(t, bin, repo, testEnv(home), "", "create", "feature-test", "--json", "--non-interactive")
+	if res.code != 2 {
+		t.Fatalf("expected exit code 2, got %d (%s)", res.code, res.stderr)
+	}
+
+	// The error should be JSON formatted since --json was passed
+	// CombinedOutput merges stdout and stderr, but the JSON error should be in stderr
+	var errOut map[string]interface{}
+	if err := json.Unmarshal([]byte(res.stderr), &errOut); err != nil {
+		t.Fatalf("expected JSON error output, got stderr: %s, stdout: %s", res.stderr, res.stdout)
+	}
+	if _, ok := errOut["error"]; !ok {
+		t.Fatalf("expected 'error' key in JSON output: %s", res.stderr)
+	}
+}

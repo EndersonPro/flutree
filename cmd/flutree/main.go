@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -32,25 +33,64 @@ func main() {
 	}
 
 	cmd := os.Args[1]
+	// Check if --json flag is passed early to use JSON error formatting
+	jsonOutput := containsFlag(os.Args, "--json")
+
 	switch cmd {
 	case "create":
-		runtime.ExitOnError(runCreate(os.Args[2:]))
+		if jsonOutput {
+			runtime.ExitOnErrorJSON(runCreate(os.Args[2:]), true)
+		} else {
+			runtime.ExitOnError(runCreate(os.Args[2:]))
+		}
 	case "add-repo":
-		runtime.ExitOnError(runAddRepo(os.Args[2:]))
+		if jsonOutput {
+			runtime.ExitOnErrorJSON(runAddRepo(os.Args[2:]), true)
+		} else {
+			runtime.ExitOnError(runAddRepo(os.Args[2:]))
+		}
 	case "list":
-		runtime.ExitOnError(runList(os.Args[2:]))
+		if jsonOutput {
+			runtime.ExitOnErrorJSON(runList(os.Args[2:]), true)
+		} else {
+			runtime.ExitOnError(runList(os.Args[2:]))
+		}
 	case "complete":
-		runtime.ExitOnError(runComplete(os.Args[2:]))
+		if jsonOutput {
+			runtime.ExitOnErrorJSON(runComplete(os.Args[2:]), true)
+		} else {
+			runtime.ExitOnError(runComplete(os.Args[2:]))
+		}
 	case "pubget":
-		runtime.ExitOnError(runPubGet(os.Args[2:]))
+		if jsonOutput {
+			runtime.ExitOnErrorJSON(runPubGet(os.Args[2:]), true)
+		} else {
+			runtime.ExitOnError(runPubGet(os.Args[2:]))
+		}
 	case "clean":
-		runtime.ExitOnError(runClean(os.Args[2:]))
+		if jsonOutput {
+			runtime.ExitOnErrorJSON(runClean(os.Args[2:]), true)
+		} else {
+			runtime.ExitOnError(runClean(os.Args[2:]))
+		}
 	case "update":
-		runtime.ExitOnError(runUpdate(os.Args[2:]))
+		if jsonOutput {
+			runtime.ExitOnErrorJSON(runUpdate(os.Args[2:]), true)
+		} else {
+			runtime.ExitOnError(runUpdate(os.Args[2:]))
+		}
 	case "config":
-		runtime.ExitOnError(runConfig(os.Args[2:]))
+		if jsonOutput {
+			runtime.ExitOnErrorJSON(runConfig(os.Args[2:]), true)
+		} else {
+			runtime.ExitOnError(runConfig(os.Args[2:]))
+		}
 	case "version", "--version":
-		runtime.ExitOnError(runVersion(os.Args[2:]))
+		if jsonOutput {
+			runtime.ExitOnErrorJSON(runVersion(os.Args[2:]), true)
+		} else {
+			runtime.ExitOnError(runVersion(os.Args[2:]))
+		}
 	case "--help", "-h", "help":
 		printHelp()
 	default:
@@ -58,10 +98,32 @@ func main() {
 	}
 }
 
+func containsFlag(args []string, flag string) bool {
+	for _, arg := range args {
+		if arg == flag {
+			return true
+		}
+	}
+	return false
+}
+
+type commandResult struct {
+	data interface{}
+	err  error
+	json bool
+}
+
+func printJSON(data interface{}, w *os.File) {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	enc.Encode(data)
+}
+
 func runList(args []string) error {
 	fs := newFlagSet("list", printListHelp)
 	showAll := fs.Bool("all", false, "Include unmanaged Git worktrees.")
 	globalScope := fs.Bool("global", false, "List managed worktrees across all registered repositories.")
+	jsonFlag := fs.Bool("json", false, "Output results as JSON.")
 	if len(args) > 0 && isHelpToken(args[0]) {
 		printListHelp()
 		return nil
@@ -79,6 +141,10 @@ func runList(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *jsonFlag {
+		printJSON(rows, os.Stdout)
+		return nil
+	}
 	ui.RenderList(rows, *showAll)
 	return nil
 }
@@ -88,6 +154,7 @@ func runComplete(args []string) error {
 	yes := fs.Bool("yes", false, "Skip interactive confirmation.")
 	force := fs.Bool("force", false, "Force worktree removal.")
 	nonInteractive := fs.Bool("non-interactive", false, "Disable prompts.")
+	jsonFlag := fs.Bool("json", false, "Output results as JSON.")
 	if len(args) > 0 && isHelpToken(args[0]) {
 		printCompleteHelp()
 		return nil
@@ -114,6 +181,10 @@ func runComplete(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *jsonFlag {
+		printJSON(result, os.Stdout)
+		return nil
+	}
 	ui.RenderCompleteSuccess(result)
 	return nil
 }
@@ -130,6 +201,7 @@ func runCreate(args []string) error {
 	nonInteractive := fs.Bool("non-interactive", false, "Disable prompts.")
 	reuseExistingBranch := fs.Bool("reuse-existing-branch", false, "Allow non-interactive reuse when target branch already exists.")
 	noPackage := fs.Bool("no-package", false, "Create root-only worktree without package selection.")
+	jsonFlag := fs.Bool("json", false, "Output results as JSON.")
 
 	var packages multiFlag
 	var packageBase multiFlag
@@ -318,6 +390,10 @@ func runCreate(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *jsonFlag {
+		printJSON(result, os.Stdout)
+		return nil
+	}
 	ui.RenderCreateSuccess(result)
 	return nil
 }
@@ -325,6 +401,7 @@ func runCreate(args []string) error {
 func runPubGet(args []string) error {
 	fs := newFlagSet("pubget", printPubGetHelp)
 	force := fs.Bool("force", false, "Clean cache and remove pubspec.lock before pub get.")
+	jsonFlag := fs.Bool("json", false, "Output results as JSON.")
 	if len(args) > 0 && isHelpToken(args[0]) {
 		printPubGetHelp()
 		return nil
@@ -352,7 +429,10 @@ func runPubGet(args []string) error {
 	if err != nil {
 		return err
 	}
-
+	if *jsonFlag {
+		printJSON(result, os.Stdout)
+		return nil
+	}
 	ui.RenderPubGetSuccess(result)
 	return nil
 }
@@ -360,6 +440,7 @@ func runPubGet(args []string) error {
 func runClean(args []string) error {
 	fs := newFlagSet("clean", printCleanHelp)
 	force := fs.Bool("force", false, "Remove pubspec.lock after clean.")
+	jsonFlag := fs.Bool("json", false, "Output results as JSON.")
 	if len(args) > 0 && isHelpToken(args[0]) {
 		printCleanHelp()
 		return nil
@@ -377,7 +458,10 @@ func runClean(args []string) error {
 	if err != nil {
 		return err
 	}
-
+	if *jsonFlag {
+		printJSON(result, os.Stdout)
+		return nil
+	}
 	ui.RenderCleanSuccess(result)
 	return nil
 }
@@ -388,6 +472,7 @@ func runAddRepo(args []string) error {
 	syncPolicy := fs.String("sync-policy", string(domain.AddRepoSyncAuto), "Sync policy before worktree creation: auto|always|never.")
 	nonInteractive := fs.Bool("non-interactive", false, "Disable prompts.")
 	reuseExistingBranch := fs.Bool("reuse-existing-branch", false, "Allow non-interactive reuse when target branch already exists.")
+	jsonFlag := fs.Bool("json", false, "Output results as JSON.")
 	var repos multiFlag
 	var packageBranchSource multiFlag
 	var packageBase multiFlag
@@ -495,12 +580,17 @@ func runAddRepo(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *jsonFlag {
+		printJSON(result, os.Stdout)
+		return nil
+	}
 	ui.RenderAddRepoSuccess(result)
 	return nil
 }
 
 func runVersion(args []string) error {
 	fs := newFlagSet("version", printVersionHelp)
+	jsonFlag := fs.Bool("json", false, "Output results as JSON.")
 	if len(args) > 0 && isHelpToken(args[0]) {
 		printVersionHelp()
 		return nil
@@ -522,12 +612,31 @@ func runVersion(args []string) error {
 		v = strings.TrimPrefix(v, "v")
 		v = strings.TrimPrefix(v, "V")
 	}
+	if *jsonFlag {
+		printJSON(map[string]string{"version": v}, os.Stdout)
+		return nil
+	}
 	fmt.Println(v)
 	return nil
 }
 
 func runConfig(args []string) error {
 	if len(args) == 0 || isHelpToken(args[0]) {
+		printConfigHelp()
+		return nil
+	}
+
+	// Parse --json flag before action to support JSON output for all config operations
+	// We need to handle this manually since config has subcommands
+	jsonFlag := false
+	for i, arg := range args {
+		if arg == "--json" {
+			jsonFlag = true
+			args = append(args[:i], args[i+1:]...)
+			break
+		}
+	}
+	if jsonFlag && len(args) == 0 {
 		printConfigHelp()
 		return nil
 	}
@@ -545,6 +654,10 @@ func runConfig(args []string) error {
 		if err != nil {
 			return err
 		}
+		if jsonFlag {
+			printJSON(map[string]string{"key": args[1], "value": stored}, os.Stdout)
+			return nil
+		}
 		fmt.Println(stored)
 		return nil
 	case "get":
@@ -554,6 +667,10 @@ func runConfig(args []string) error {
 		value, err := service.GetScopeRoot(args[1])
 		if err != nil {
 			return err
+		}
+		if jsonFlag {
+			printJSON(map[string]string{"key": args[1], "value": value}, os.Stdout)
+			return nil
 		}
 		fmt.Println(value)
 		return nil
@@ -566,6 +683,7 @@ func runUpdate(args []string) error {
 	fs := newFlagSet("update", printUpdateHelp)
 	check := fs.Bool("check", false, "Check whether a brew update is available.")
 	apply := fs.Bool("apply", false, "Apply brew update now.")
+	jsonFlag := fs.Bool("json", false, "Output results as JSON.")
 	if len(args) > 0 && isHelpToken(args[0]) {
 		printUpdateHelp()
 		return nil
@@ -585,6 +703,11 @@ func runUpdate(args []string) error {
 	result, err := service.Run(domain.UpdateInput{Check: *check, Apply: *apply})
 	if err != nil {
 		return err
+	}
+
+	if *jsonFlag {
+		printJSON(result, os.Stdout)
+		return nil
 	}
 
 	if result.Mode == "check" {
@@ -707,6 +830,7 @@ func printCreateHelp() {
 	fmt.Println("  " + flagStyle.Render("--copy-root-file") + " <pattern>        " + muted.Render("Extra root file/pattern to copy (repeatable)"))
 	fmt.Println("  " + flagStyle.Render("--package") + " <selector>              " + muted.Render("Package repository selector (repeatable)"))
 	fmt.Println("  " + flagStyle.Render("--package-base") + " <sel>=<branch>     " + muted.Render("Override package base branch (repeatable)"))
+	fmt.Println("  " + flagStyle.Render("--json") + "                            " + muted.Render("Output results as JSON"))
 	fmt.Println("  " + flagStyle.Render("-h, --help") + "                        " + muted.Render("Show this help"))
 }
 
@@ -730,6 +854,7 @@ func printAddRepoHelp() {
 	fmt.Println("  " + flagStyle.Render("--reuse-existing-branch") + "           " + muted.Render("Allow non-interactive reuse of existing branch"))
 	fmt.Println("  " + flagStyle.Render("--copy-root-file") + " <pattern>        " + muted.Render("Extra root file/pattern to copy (repeatable)"))
 	fmt.Println("  " + flagStyle.Render("--non-interactive") + "                 " + muted.Render("Disable interactive wizard/prompts and require deterministic selectors"))
+	fmt.Println("  " + flagStyle.Render("--json") + "                            " + muted.Render("Output results as JSON"))
 	fmt.Println("  " + flagStyle.Render("-h, --help") + "                        " + muted.Render("Show this help"))
 }
 
@@ -747,6 +872,7 @@ func printConfigHelp() {
 	fmt.Println("")
 	fmt.Println(accent.Render("Supported keys:"))
 	fmt.Println("  " + flagStyle.Render("scope.root") + "                      " + muted.Render("Default discovery root for create/add-repo when --scope is omitted"))
+	fmt.Println("  " + flagStyle.Render("--json") + "                            " + muted.Render("Output results as JSON"))
 	fmt.Println("  " + flagStyle.Render("-h, --help") + "                        " + muted.Render("Show this help"))
 }
 
@@ -783,6 +909,7 @@ func printListHelp() {
 	fmt.Println(accent.Render("Options:"))
 	fmt.Println("  " + flagStyle.Render("--all") + "                             " + muted.Render("Include unmanaged Git worktrees"))
 	fmt.Println("  " + flagStyle.Render("--global") + "                          " + muted.Render("List across all registered repositories"))
+	fmt.Println("  " + flagStyle.Render("--json") + "                            " + muted.Render("Output results as JSON"))
 	fmt.Println("  " + flagStyle.Render("-h, --help") + "                        " + muted.Render("Show this help"))
 }
 
@@ -801,6 +928,7 @@ func printCompleteHelp() {
 	fmt.Println("  " + flagStyle.Render("--yes") + "                             " + muted.Render("Skip interactive confirmation"))
 	fmt.Println("  " + flagStyle.Render("--force") + "                           " + muted.Render("Force worktree removal"))
 	fmt.Println("  " + flagStyle.Render("--non-interactive") + "                 " + muted.Render("Disable prompts"))
+	fmt.Println("  " + flagStyle.Render("--json") + "                            " + muted.Render("Output results as JSON"))
 	fmt.Println("  " + flagStyle.Render("-h, --help") + "                        " + muted.Render("Show this help"))
 }
 
@@ -817,6 +945,7 @@ func printPubGetHelp() {
 	fmt.Println("")
 	fmt.Println(accent.Render("Options:"))
 	fmt.Println("  " + flagStyle.Render("--force") + "                           " + muted.Render("Clean cache and remove pubspec.lock before pub get"))
+	fmt.Println("  " + flagStyle.Render("--json") + "                            " + muted.Render("Output results as JSON"))
 	fmt.Println("  " + flagStyle.Render("-h, --help") + "                        " + muted.Render("Show this help"))
 }
 
@@ -833,6 +962,7 @@ func printCleanHelp() {
 	fmt.Println("")
 	fmt.Println(accent.Render("Options:"))
 	fmt.Println("  " + flagStyle.Render("--force") + "                           " + muted.Render("Also remove pubspec.lock"))
+	fmt.Println("  " + flagStyle.Render("--json") + "                            " + muted.Render("Output results as JSON"))
 	fmt.Println("  " + flagStyle.Render("-h, --help") + "                        " + muted.Render("Show this help"))
 }
 
@@ -850,6 +980,7 @@ func printUpdateHelp() {
 	fmt.Println(accent.Render("Options:"))
 	fmt.Println("  " + flagStyle.Render("--check") + "                           " + muted.Render("Check whether a brew update is available"))
 	fmt.Println("  " + flagStyle.Render("--apply") + "                           " + muted.Render("Apply brew update now"))
+	fmt.Println("  " + flagStyle.Render("--json") + "                            " + muted.Render("Output results as JSON"))
 	fmt.Println("  " + flagStyle.Render("-h, --help") + "                        " + muted.Render("Show this help"))
 }
 
@@ -865,5 +996,6 @@ func printVersionHelp() {
 	fmt.Println("  flutree version")
 	fmt.Println("")
 	fmt.Println(accent.Render("Options:"))
+	fmt.Println("  " + flagStyle.Render("--json") + "                            " + muted.Render("Output results as JSON"))
 	fmt.Println("  " + flagStyle.Render("-h, --help") + "                        " + muted.Render("Show this help"))
 }
