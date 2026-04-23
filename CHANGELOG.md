@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.0](https://github.com/EndersonPro/flutree/compare/v0.16.1...v0.17.0) (2026-04-23)
+
+
+### Features
+
+* **cli:** add --json flag for JSON output in commands and error handling ([3dce97a](https://github.com/EndersonPro/flutree/commit/3dce97aa0bcbde7d2accc13ee6a077b1986f97e5))
+
 ## [0.16.1](https://github.com/EndersonPro/flutree/compare/v0.16.0...v0.16.1) (2026-04-22)
 
 
