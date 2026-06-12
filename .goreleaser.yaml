@@ -25,13 +25,27 @@ archives:
     format_overrides:
       - goos: windows
         format: zip
-    name_template: "{{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    # darwin→macos mapping: goreleaser renders .Os as "darwin" but the existing
+    # Homebrew formula URLs (from release-please release-brew job) use "macos"
+    # (e.g. flutree-1.0.2-macos-arm64.tar.gz). This template keeps both in sync.
+    name_template: "{{ .ProjectName }}-{{ .Version }}-{{ if eq .Os \"darwin\" }}macos{{ else }}{{ .Os }}{{ end }}-{{ .Arch }}"
     files:
       - LICENSE
 
 checksum:
   name_template: checksums.txt
   algorithm: sha256
+
+# release-please creates the GitHub release for the tag. goreleaser must only
+# append multi-platform assets — never replace/recreate the release — so that
+# the release-please release notes are preserved intact.
+#
+# Phase-1 coexistence (TASK-010/011): release-please's release-brew job still
+# publishes the macos-arm64 asset and updates the Homebrew formula; goreleaser
+# appends the remaining platform assets. Once the side-by-side run is validated
+# manually (TASK-010), the release-brew job will be retired (TASK-011).
+release:
+  mode: append
 
 brews:
   # tap: EndersonPro/homebrew-flutree
@@ -51,6 +65,9 @@ brews:
 
 scoops:
   # bucket: EndersonPro/scoop-flutree
+  # HOMEBREW_TAP_TOKEN is reused here intentionally (single PAT). The PAT MUST
+  # have write access to BOTH EndersonPro/homebrew-flutree AND
+  # EndersonPro/scoop-flutree to allow both publishers to push.
   - repository:
       owner: EndersonPro
       name: scoop-flutree

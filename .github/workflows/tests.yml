@@ -59,6 +59,10 @@ jobs:
   windows-build:
     name: windows-build
     runs-on: ubuntu-latest
+    # GOOS is set at job level so every step targets windows; GOARCH=amd64 is
+    # inlined on the build step only (vet covers all arches goreleaser builds).
+    env:
+      GOOS: windows
 
     steps:
       - uses: actions/checkout@v4
@@ -69,4 +73,4 @@ jobs:
       - name: Cross-compile for Windows
         run: GOOS=windows GOARCH=amd64 go build ./cmd/flutree
       - name: Vet for Windows
-        run: GOOS=windows go vet ./...
+        run: go vet ./...

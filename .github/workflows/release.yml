@@ -10,6 +10,11 @@ permissions:
 
 jobs:
   release:
+    # Phase-1 coexistence: release-please's release-brew job still publishes the
+    # macos-arm64 asset + Homebrew formula update; this goreleaser job appends the
+    # remaining multi-platform assets (linux-amd64, windows-amd64, windows-arm64,
+    # etc.) to the same release. The release-brew job will be retired after
+    # side-by-side validation (TASK-010/011).
     name: release
     runs-on: ubuntu-latest
     steps:
@@ -22,8 +27,12 @@ jobs:
           cache: true
       - uses: goreleaser/goreleaser-action@v7
         with:
-          version: latest
+          # Pinned to concrete v2 release; update deliberately after vetting changelog.
+          version: "v2.16.0"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # HOMEBREW_TAP_TOKEN is a single PAT used for both brews and scoops publishers
+          # (EndersonPro/homebrew-flutree AND EndersonPro/scoop-flutree). The PAT MUST
+          # have write access to BOTH repositories.
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

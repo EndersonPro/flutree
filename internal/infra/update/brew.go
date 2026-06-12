@@ -23,6 +23,8 @@ func NewBrewGateway() *BrewGateway {
 
 func (g *BrewGateway) CheckBrewInstalled() error {
 	goos := g.goos
+	// Zero-value BrewGateway (empty goos) treats the empty string as host OS for
+	// backward compatibility; prefer NewBrewGateway() for explicit initialization.
 	if goos == "" {
 		goos = runtime.GOOS
 	}
