@@ -309,7 +309,10 @@ func (m addRepoWizardModel) updateReview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m addRepoWizardModel) progressLabel() string {
-	type stepInfo struct{ num int; label string }
+	type stepInfo struct {
+		num   int
+		label string
+	}
 	steps := []stepInfo{
 		{1, "Select repos"},
 		{2, "Review"},
@@ -324,7 +327,7 @@ func (m addRepoWizardModel) progressLabel() string {
 			prefix = "●"
 			style = wizardProgressActiveStyle
 		}
-		out.WriteString(style.Render(prefix+" Step "+strconv.Itoa(s.num)+": "+s.label))
+		out.WriteString(style.Render(prefix + " Step " + strconv.Itoa(s.num) + ": " + s.label))
 		if s.num < len(steps) {
 			out.WriteString("  ")
 		}

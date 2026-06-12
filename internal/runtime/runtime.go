@@ -49,9 +49,9 @@ func ExitOnErrorJSON(err error, jsonFlag bool) {
 			jsonErr := ErrorJSONOutput{
 				Error: ErrorInfo{
 					Category: string(appErr.Category),
-					Code:    appErr.Code,
-					Message: appErr.Message,
-					Hint:    appErr.Hint,
+					Code:     appErr.Code,
+					Message:  appErr.Message,
+					Hint:     appErr.Hint,
 				},
 			}
 			data, _ := json.MarshalIndent(jsonErr, "", "  ")
@@ -71,8 +71,8 @@ func ExitOnErrorJSON(err error, jsonFlag bool) {
 		jsonErr := ErrorJSONOutput{
 			Error: ErrorInfo{
 				Category: string(domain.CategoryUnexpected),
-				Code:    1,
-				Message: "Command failed.",
+				Code:     1,
+				Message:  "Command failed.",
 			},
 		}
 		data, _ := json.MarshalIndent(jsonErr, "", "  ")
