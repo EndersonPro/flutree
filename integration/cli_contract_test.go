@@ -31,7 +31,6 @@ func buildCLI(t *testing.T) string {
 	return bin
 }
 
-
 type runResult struct {
 	code   int
 	stdout string
