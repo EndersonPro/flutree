@@ -224,6 +224,12 @@ func TestGoreleaserYamlTokens(t *testing.T) {
 			t.Fatalf(".goreleaser.yaml missing required token %q", token)
 		}
 	}
+
+	// The spec requires linux/arm64 in the build matrix; guard against it
+	// reappearing in the ignore block (slipped through once already).
+	if strings.Contains(content, "goos: linux\n        goarch: arm64") {
+		t.Fatal(".goreleaser.yaml must not ignore the linux/arm64 build target")
+	}
 }
 
 func TestWindowsBuildJobExists(t *testing.T) {
