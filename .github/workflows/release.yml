@@ -1,9 +1,19 @@
 name: release
 
+# Normal release path: goreleaser is chained inside release-please.yml via
+# needs: because GITHUB_TOKEN tag pushes from release-please do not trigger
+# external tag-based workflows (GitHub Actions recursion guard).
+#
+# This workflow exists for manual backfill (e.g. v1.1.0 which shipped without
+# multi-platform assets) and recovery, mirroring release-brew.yml's fallback
+# philosophy. Trigger it manually from the Actions tab, supplying the exact tag.
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v1.1.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -20,6 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.tag }}
           fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
