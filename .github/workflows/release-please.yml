@@ -142,3 +142,33 @@ jobs:
             echo "- TARBALL: ${TARBALL:-unknown}"
             echo "- SHAFILE: ${SHAFILE:-unknown}"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # WHY this job lives here and not in release.yml:
+  # GitHub Actions never fires a workflow from an event generated with the
+  # default GITHUB_TOKEN (recursion guard). release-please pushes the v* tag
+  # using GITHUB_TOKEN, so a push:tags trigger in release.yml is silently dead.
+  # Chaining via needs: in this same workflow run bypasses that restriction.
+  # Phase-1 coexistence: release-brew still publishes the macos-arm64 asset and
+  # updates the Homebrew formula; this job appends all remaining platform assets
+  # (linux-amd64, windows-amd64, windows-arm64, etc.) via goreleaser's append mode.
+  goreleaser:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "v2.16.0"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

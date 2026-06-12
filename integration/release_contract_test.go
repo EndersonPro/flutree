@@ -175,10 +175,12 @@ func TestGoreleaserReleaseWorkflowExists(t *testing.T) {
 	}
 	content := string(b)
 
+	// release.yml is repurposed as a manual backfill/recovery workflow.
+	// Normal goreleaser execution lives in release-please.yml (chained via needs:)
+	// because GITHUB_TOKEN tag pushes from release-please cannot trigger tag workflows.
 	required := []string{
-		`push:`,
-		`tags:`,
-		`- "v*"`,
+		`workflow_dispatch:`,
+		`tag`,
 		`goreleaser/goreleaser-action`,
 		`release --clean`,
 		`GITHUB_TOKEN`,
@@ -189,6 +191,44 @@ func TestGoreleaserReleaseWorkflowExists(t *testing.T) {
 	for _, token := range required {
 		if !strings.Contains(content, token) {
 			t.Fatalf("release workflow missing required token %q", token)
+		}
+	}
+
+	// A push: tags: trigger here is dead code under the release-please flow.
+	// Assert its absence so the broken assumption cannot regress.
+	forbidden := []string{
+		`push:`,
+		`- "v*"`,
+	}
+	for _, token := range forbidden {
+		if strings.Contains(content, token) {
+			t.Fatalf("release.yml contains forbidden trigger token %q (use workflow_dispatch for manual backfill)", token)
+		}
+	}
+}
+
+func TestReleasePleaseWorkflowChainsGoreleaser(t *testing.T) {
+	root := projectRoot(t)
+	workflowPath := filepath.Join(root, ".github", "workflows", "release-please.yml")
+	b, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(b)
+
+	// The goreleaser job must be chained inside release-please.yml because
+	// GITHUB_TOKEN tag pushes do not trigger external tag-based workflows.
+	required := []string{
+		`goreleaser:`,
+		`needs: release-please`,
+		`needs.release-please.outputs.release_created == 'true'`,
+		`goreleaser/goreleaser-action@v7`,
+		`version: "v2.16.0"`,
+		`HOMEBREW_TAP_TOKEN`,
+	}
+	for _, token := range required {
+		if !strings.Contains(content, token) {
+			t.Fatalf("release-please.yml missing goreleaser chain token %q", token)
 		}
 	}
 }
