@@ -123,14 +123,18 @@ func buildListWorktreesTool() mcplib.Tool {
 }
 
 // buildCreateWorktreeTool defines the tool schema for create_worktree.
+// base_branch is required — agents must ask the user rather than guess.
+// sync_with_remote fetches origin/<base_branch> before creating so the
+// worktree starts from the latest remote state.
 func buildCreateWorktreeTool() mcplib.Tool {
 	return mcplib.NewTool("create_worktree",
-		mcplib.WithDescription("Create a new flutree worktree."),
+		mcplib.WithDescription("Create a new flutree worktree. base_branch is required — ask the user which branch to base the worktree on. Use sync_with_remote=true to fetch the latest changes from origin before creating."),
 		mcplib.WithString("name", mcplib.Required(), mcplib.Description("Worktree name.")),
 		mcplib.WithString("root_repo", mcplib.Required(), mcplib.Description("Absolute path to the root repository.")),
 		mcplib.WithString("scope", mcplib.Required(), mcplib.Description("Execution scope path.")),
 		mcplib.WithString("branch", mcplib.Description("Branch name to create.")),
-		mcplib.WithString("base_branch", mcplib.Description("Base branch to branch from.")),
+		mcplib.WithString("base_branch", mcplib.Required(), mcplib.Description("Git branch to base the new worktree on (e.g. 'main', 'develop'). Required — if the user has not specified one, ask them instead of guessing.")),
+		mcplib.WithBoolean("sync_with_remote", mcplib.Description("Fetch the base branch from origin and branch from origin/<base_branch> instead of the local ref. Recommended to get the latest changes before creating.")),
 		mcplib.WithBoolean("no_package", mcplib.Description("Skip package discovery.")),
 		mcplib.WithArray("packages", mcplib.Description("Package selectors.")),
 		mcplib.WithObject("package_base_branches", mcplib.Description("Per-package base branch overrides.")),
