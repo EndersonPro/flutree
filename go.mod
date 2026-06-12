@@ -11,6 +11,8 @@ require (
 	github.com/mark3labs/mcp-go v0.54.1
 	github.com/mattn/go-isatty v0.0.20
 	github.com/mattn/go-runewidth v0.0.16
+	github.com/pelletier/go-toml/v2 v2.3.1
+	github.com/tidwall/jsonc v0.3.3
 )
 
 require (
