@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.2](https://github.com/EndersonPro/flutree/compare/v1.0.1...v1.0.2) (2026-06-12)
+
+
+### Bug Fixes
+
+* **mcp:** require base_branch and expose sync_with_remote in create_worktree ([931bf0b](https://github.com/EndersonPro/flutree/commit/931bf0be899406fe1926b631c7102bf27e9026b1))
+
 ## [1.0.1](https://github.com/EndersonPro/flutree/compare/v1.0.0...v1.0.1) (2026-06-12)
 
 
