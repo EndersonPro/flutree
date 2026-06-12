@@ -107,15 +107,15 @@ type PubGetInput struct {
 }
 
 type PubGetRepoResult struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
+	Name string  `json:"name"`
+	Path string  `json:"path"`
 	Tool PubTool `json:"tool"`
-	Role string `json:"role"`
+	Role string  `json:"role"`
 }
 
 type PubGetResult struct {
-	WorkspaceName string            `json:"workspace_name"`
-	Root          PubGetRepoResult  `json:"root"`
+	WorkspaceName string             `json:"workspace_name"`
+	Root          PubGetRepoResult   `json:"root"`
 	Packages      []PubGetRepoResult `json:"packages"`
 	Force         bool               `json:"force"`
 }
@@ -174,9 +174,9 @@ type CreateApplyOptions struct {
 
 type CreateResult struct {
 	Record           RegistryRecord `json:"record"`
-	NextStep         string          `json:"next_step"`
-	SelectedPackages []string        `json:"selected_packages"`
-	WorkspacePath    string          `json:"workspace_path"`
+	NextStep         string         `json:"next_step"`
+	SelectedPackages []string       `json:"selected_packages"`
+	WorkspacePath    string         `json:"workspace_path"`
 }
 
 type AddRepoSyncPolicy string
