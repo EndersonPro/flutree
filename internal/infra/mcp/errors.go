@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
@@ -35,7 +36,7 @@ func toToolError(err error) *mcpCallToolResult {
 	}
 
 	var appErr *domain.AppError
-	if ok := unwrapAppError(err, &appErr); ok {
+	if ok := errors.As(err, &appErr); ok {
 		payload.Category = string(appErr.Category)
 		payload.Message = appErr.Message
 		payload.Hint = appErr.Hint
@@ -73,22 +74,4 @@ func withPanicRecovery(fn func() (*mcpCallToolResult, error)) (result *mcpCallTo
 		}
 	}()
 	return fn()
-}
-
-// unwrapAppError tries to unwrap an *domain.AppError from any error chain.
-func unwrapAppError(err error, target **domain.AppError) bool {
-	if err == nil {
-		return false
-	}
-	if ae, ok := err.(*domain.AppError); ok {
-		*target = ae
-		return true
-	}
-	// Walk the chain manually (errors.As would also work, but this avoids
-	// importing "errors" just for the chain walk given we already have the cast).
-	type unwrapper interface{ Unwrap() error }
-	if u, ok := err.(unwrapper); ok {
-		return unwrapAppError(u.Unwrap(), target)
-	}
-	return false
 }

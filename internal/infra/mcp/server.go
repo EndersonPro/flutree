@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -42,8 +43,9 @@ type configRunner interface {
 }
 
 // MCPServices holds all application-layer service interfaces that MCP tool
-// handlers invoke. Any field may be nil in test contexts where only a subset
-// of tools is exercised; the handlers guard against nil via withPanicRecovery.
+// handlers invoke. All interface fields must be non-nil; BuildServer returns
+// an error listing every nil field so callers get an explicit failure rather
+// than an opaque panic at call time. withPanicRecovery remains as a last resort.
 type MCPServices struct {
 	Version  string
 	List     listRunner
@@ -55,9 +57,36 @@ type MCPServices struct {
 	Config   configRunner
 }
 
-// BuildServer constructs and returns a fully registered MCP server.
+// BuildServer constructs and returns a fully registered MCP server, or an
+// error if any required service field in services is nil.
 // All 9 tools are registered here; actual handler implementations live in tools.go.
-func BuildServer(version string, services MCPServices) *mcpserver.MCPServer {
+func BuildServer(version string, services MCPServices) (*mcpserver.MCPServer, error) {
+	var nilFields []string
+	if services.List == nil {
+		nilFields = append(nilFields, "List")
+	}
+	if services.Create == nil {
+		nilFields = append(nilFields, "Create")
+	}
+	if services.AddRepo == nil {
+		nilFields = append(nilFields, "AddRepo")
+	}
+	if services.Complete == nil {
+		nilFields = append(nilFields, "Complete")
+	}
+	if services.PubGet == nil {
+		nilFields = append(nilFields, "PubGet")
+	}
+	if services.Clean == nil {
+		nilFields = append(nilFields, "Clean")
+	}
+	if services.Config == nil {
+		nilFields = append(nilFields, "Config")
+	}
+	if len(nilFields) > 0 {
+		return nil, fmt.Errorf("BuildServer: nil service fields: %v", nilFields)
+	}
+
 	s := mcpserver.NewMCPServer("flutree", version)
 
 	s.AddTool(buildListWorktreesTool(), makeListWorktreesHandler(services))
@@ -70,7 +99,7 @@ func BuildServer(version string, services MCPServices) *mcpserver.MCPServer {
 	s.AddTool(buildSetConfigTool(), makeSetConfigHandler(services))
 	s.AddTool(buildGetVersionTool(), makeGetVersionHandler(services))
 
-	return s
+	return s, nil
 }
 
 // ServeStdio blocks on stdin and serves MCP requests until the client closes the connection.

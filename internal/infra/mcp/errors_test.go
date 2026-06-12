@@ -102,6 +102,33 @@ func TestToToolError_DomainError(t *testing.T) {
 	}
 }
 
+func TestToToolError_JoinedErrorChain(t *testing.T) {
+	// errors.Join produces an error with Unwrap() []error — the old manual walk
+	// missed this case; errors.As handles it correctly.
+	appErr := domain.NewError(domain.CategoryGit, 7, "joined git error", "try again", nil)
+	joined := errors.Join(errors.New("wrapper"), appErr)
+
+	result := toToolError(joined)
+
+	if result == nil || !result.IsError {
+		t.Fatal("expected IsError=true")
+	}
+	text := extractTextContent(t, result.Content)
+	var payload struct {
+		Category string `json:"category"`
+		Code     int    `json:"code"`
+	}
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		t.Fatalf("not valid JSON: %v — got: %q", err, text)
+	}
+	if payload.Category != "git" {
+		t.Errorf("expected category=git, got %q", payload.Category)
+	}
+	if payload.Code != 7 {
+		t.Errorf("expected code=7, got %d", payload.Code)
+	}
+}
+
 func TestWithPanicRecovery_NoPanic(t *testing.T) {
 	called := false
 	result, err := withPanicRecovery(func() (*mcpCallToolResult, error) {

@@ -25,14 +25,16 @@ func (f *fakeListRunner) Run(input domain.ListInput) ([]domain.ListRow, error) {
 }
 
 type fakeCreateRunner struct {
-	planErr                error
-	applyErr               error
-	result                 domain.CreateResult
-	nonInteractiveCaptured bool
+	planErr                   error
+	applyErr                  error
+	result                    domain.CreateResult
+	nonInteractiveCaptured    bool
+	capturedPackageBaseBranch map[string]string
 }
 
 func (f *fakeCreateRunner) BuildDryPlan(input domain.CreateInput) (domain.CreateDryPlan, error) {
 	f.nonInteractiveCaptured = input.NonInteractive
+	f.capturedPackageBaseBranch = input.PackageBaseBranch
 	if f.planErr != nil {
 		return domain.CreateDryPlan{}, f.planErr
 	}
@@ -49,13 +51,17 @@ func (f *fakeCreateRunner) Apply(plan domain.CreateDryPlan, opts domain.CreateAp
 }
 
 type fakeAddRepoRunner struct {
-	result                 domain.AddRepoResult
-	err                    error
-	nonInteractiveCaptured bool
+	result                      domain.AddRepoResult
+	err                         error
+	nonInteractiveCaptured      bool
+	capturedPackageBranchSource map[string]string
+	capturedPackageBaseBranch   map[string]string
 }
 
 func (f *fakeAddRepoRunner) Run(input domain.AddRepoInput) (domain.AddRepoResult, error) {
 	f.nonInteractiveCaptured = input.NonInteractive
+	f.capturedPackageBranchSource = input.PackageBranchSource
+	f.capturedPackageBaseBranch = input.PackageBaseBranch
 	return f.result, f.err
 }
 
@@ -217,6 +223,85 @@ func TestCreateWorktree_MissingRootRepo(t *testing.T) {
 	}
 }
 
+func TestCreateWorktree_MissingName(t *testing.T) {
+	svc := MCPServices{Create: &fakeCreateRunner{}}
+	handler := makeCreateWorktreeHandler(svc)
+	result, err := handler(context.Background(), makeRequest(map[string]any{
+		"root_repo": "/repos/myapp",
+		"scope":     "/repos",
+		// name intentionally absent
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected isError=true for missing name")
+	}
+	text := extractTextContent(t, result.Content)
+	var payload struct {
+		Category string `json:"category"`
+	}
+	if jsonErr := json.Unmarshal([]byte(text), &payload); jsonErr != nil {
+		t.Fatalf("error payload not valid JSON: %v", jsonErr)
+	}
+	if payload.Category != "input" {
+		t.Errorf("expected category=input, got %q", payload.Category)
+	}
+}
+
+func TestCreateWorktree_MissingScope(t *testing.T) {
+	svc := MCPServices{Create: &fakeCreateRunner{}}
+	handler := makeCreateWorktreeHandler(svc)
+	result, err := handler(context.Background(), makeRequest(map[string]any{
+		"name":      "my-wt",
+		"root_repo": "/repos/myapp",
+		// scope intentionally absent
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected isError=true for missing scope")
+	}
+	text := extractTextContent(t, result.Content)
+	var payload struct {
+		Category string `json:"category"`
+	}
+	if jsonErr := json.Unmarshal([]byte(text), &payload); jsonErr != nil {
+		t.Fatalf("error payload not valid JSON: %v", jsonErr)
+	}
+	if payload.Category != "input" {
+		t.Errorf("expected category=input, got %q", payload.Category)
+	}
+}
+
+func TestCreateWorktree_PackageBaseBranchesWired(t *testing.T) {
+	fake := &fakeCreateRunner{}
+	svc := MCPServices{Create: fake}
+	handler := makeCreateWorktreeHandler(svc)
+	result, err := handler(context.Background(), makeRequest(map[string]any{
+		"name":                  "my-wt",
+		"root_repo":             "/repos/myapp",
+		"scope":                 "/repos",
+		"package_base_branches": map[string]any{"pkg-a": "main", "pkg-b": "develop"},
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", extractTextContent(t, result.Content))
+	}
+	if fake.capturedPackageBaseBranch == nil {
+		t.Fatal("PackageBaseBranch was not wired into CreateInput")
+	}
+	if fake.capturedPackageBaseBranch["pkg-a"] != "main" {
+		t.Errorf("expected pkg-a=main, got %q", fake.capturedPackageBaseBranch["pkg-a"])
+	}
+	if fake.capturedPackageBaseBranch["pkg-b"] != "develop" {
+		t.Errorf("expected pkg-b=develop, got %q", fake.capturedPackageBaseBranch["pkg-b"])
+	}
+}
+
 // ── test: add_repo ───────────────────────────────────────────────────────────
 
 func TestAddRepo_HappyPath(t *testing.T) {
@@ -263,6 +348,38 @@ func TestAddRepo_UnknownWorkspace(t *testing.T) {
 	_ = json.Unmarshal([]byte(text), &payload)
 	if payload.Category != "precondition" {
 		t.Errorf("expected category=precondition, got %q", payload.Category)
+	}
+}
+
+func TestAddRepo_PackageFieldsWired(t *testing.T) {
+	fake := &fakeAddRepoRunner{
+		result: domain.AddRepoResult{WorkspaceName: "ws"},
+	}
+	svc := MCPServices{AddRepo: fake}
+	handler := makeAddRepoHandler(svc)
+	result, err := handler(context.Background(), makeRequest(map[string]any{
+		"workspace_name":        "ws",
+		"repos":                 []string{"repo-a"},
+		"package_branch_source": map[string]any{"pkg-a": "feature/x"},
+		"package_base":          map[string]any{"pkg-b": "main"},
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", extractTextContent(t, result.Content))
+	}
+	if fake.capturedPackageBranchSource == nil {
+		t.Fatal("PackageBranchSource was not wired into AddRepoInput")
+	}
+	if fake.capturedPackageBranchSource["pkg-a"] != "feature/x" {
+		t.Errorf("expected pkg-a=feature/x, got %q", fake.capturedPackageBranchSource["pkg-a"])
+	}
+	if fake.capturedPackageBaseBranch == nil {
+		t.Fatal("PackageBaseBranch was not wired into AddRepoInput")
+	}
+	if fake.capturedPackageBaseBranch["pkg-b"] != "main" {
+		t.Errorf("expected pkg-b=main, got %q", fake.capturedPackageBaseBranch["pkg-b"])
 	}
 }
 

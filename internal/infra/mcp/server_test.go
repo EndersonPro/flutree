@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 )
 
@@ -17,17 +19,34 @@ var expectedToolNames = []string{
 	"get_version",
 }
 
+func fullServices(version string) MCPServices {
+	return MCPServices{
+		Version:  version,
+		List:     &fakeListRunner{},
+		Create:   &fakeCreateRunner{},
+		AddRepo:  &fakeAddRepoRunner{},
+		Complete: &fakeCompleteRunner{},
+		PubGet:   &fakePubGetRunner{},
+		Clean:    &fakeCleanRunner{},
+		Config:   &fakeConfigRunner{},
+	}
+}
+
 func TestBuildServerIsNotNil(t *testing.T) {
-	svc := MCPServices{Version: "0.0.0-test"}
-	s := BuildServer("0.0.0-test", svc)
+	s, err := BuildServer("0.0.0-test", fullServices("0.0.0-test"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if s == nil {
 		t.Fatal("expected non-nil MCPServer")
 	}
 }
 
 func TestBuildServerRegistersExactlyNineTools(t *testing.T) {
-	svc := MCPServices{Version: "0.0.0-test"}
-	s := BuildServer("0.0.0-test", svc)
+	s, err := BuildServer("0.0.0-test", fullServices("0.0.0-test"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	tools := s.ListTools()
 	if len(tools) != len(expectedToolNames) {
@@ -41,15 +60,57 @@ func TestBuildServerRegistersExactlyNineTools(t *testing.T) {
 	}
 }
 
-func TestBuildServerVersionIsSetInServices(t *testing.T) {
+func TestBuildServerGetVersionHandlerReturnsVersion(t *testing.T) {
 	const v = "1.2.3"
-	svc := MCPServices{Version: v}
-	s := BuildServer(v, svc)
-	if s == nil {
-		t.Fatal("expected non-nil MCPServer")
+	svc := fullServices(v)
+	s, err := BuildServer(v, svc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	// The version field is embedded in MCPServices and accessible to get_version tool.
-	if svc.Version != v {
-		t.Errorf("expected version %q in MCPServices, got %q", v, svc.Version)
+
+	tools := s.ListTools()
+	versionTool, ok := tools["get_version"]
+	if !ok {
+		t.Fatal("get_version tool not registered")
+	}
+
+	result, err := versionTool.Handler(context.Background(), makeRequest(nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got error")
+	}
+
+	text := extractTextContent(t, result.Content)
+	var m map[string]string
+	if jsonErr := json.Unmarshal([]byte(text), &m); jsonErr != nil {
+		t.Fatalf("result not valid JSON: %v — got: %q", jsonErr, text)
+	}
+	if m["version"] != v {
+		t.Errorf("expected version=%q, got %q", v, m["version"])
+	}
+}
+
+func TestBuildServerNilServiceReturnsError(t *testing.T) {
+	cases := []struct {
+		name string
+		svc  MCPServices
+	}{
+		{"nil List", MCPServices{Version: "0.0.0-test", Create: &fakeCreateRunner{}, AddRepo: &fakeAddRepoRunner{}, Complete: &fakeCompleteRunner{}, PubGet: &fakePubGetRunner{}, Clean: &fakeCleanRunner{}, Config: &fakeConfigRunner{}}},
+		{"nil Create", MCPServices{Version: "0.0.0-test", List: &fakeListRunner{}, AddRepo: &fakeAddRepoRunner{}, Complete: &fakeCompleteRunner{}, PubGet: &fakePubGetRunner{}, Clean: &fakeCleanRunner{}, Config: &fakeConfigRunner{}}},
+		{"nil AddRepo", MCPServices{Version: "0.0.0-test", List: &fakeListRunner{}, Create: &fakeCreateRunner{}, Complete: &fakeCompleteRunner{}, PubGet: &fakePubGetRunner{}, Clean: &fakeCleanRunner{}, Config: &fakeConfigRunner{}}},
+		{"nil Complete", MCPServices{Version: "0.0.0-test", List: &fakeListRunner{}, Create: &fakeCreateRunner{}, AddRepo: &fakeAddRepoRunner{}, PubGet: &fakePubGetRunner{}, Clean: &fakeCleanRunner{}, Config: &fakeConfigRunner{}}},
+		{"nil PubGet", MCPServices{Version: "0.0.0-test", List: &fakeListRunner{}, Create: &fakeCreateRunner{}, AddRepo: &fakeAddRepoRunner{}, Complete: &fakeCompleteRunner{}, Clean: &fakeCleanRunner{}, Config: &fakeConfigRunner{}}},
+		{"nil Clean", MCPServices{Version: "0.0.0-test", List: &fakeListRunner{}, Create: &fakeCreateRunner{}, AddRepo: &fakeAddRepoRunner{}, Complete: &fakeCompleteRunner{}, PubGet: &fakePubGetRunner{}, Config: &fakeConfigRunner{}}},
+		{"nil Config", MCPServices{Version: "0.0.0-test", List: &fakeListRunner{}, Create: &fakeCreateRunner{}, AddRepo: &fakeAddRepoRunner{}, Complete: &fakeCompleteRunner{}, PubGet: &fakePubGetRunner{}, Clean: &fakeCleanRunner{}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := BuildServer("0.0.0-test", tc.svc)
+			if err == nil {
+				t.Errorf("expected error for %s, got nil", tc.name)
+			}
+		})
 	}
 }

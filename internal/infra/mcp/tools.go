@@ -44,10 +44,24 @@ func makeCreateWorktreeHandler(svc MCPServices) toolHandler {
 			rootRepo := req.GetString("root_repo", "")
 			scope := req.GetString("scope", "")
 
+			if name == "" {
+				return toToolError(domain.NewError(domain.CategoryInput, 2,
+					"Missing required argument: name.",
+					"Provide a non-empty worktree name.",
+					nil,
+				)), nil
+			}
 			if rootRepo == "" {
 				return toToolError(domain.NewError(domain.CategoryInput, 2,
 					"Missing required argument: root_repo.",
 					"Provide the absolute path to the root repository.",
+					nil,
+				)), nil
+			}
+			if scope == "" {
+				return toToolError(domain.NewError(domain.CategoryInput, 2,
+					"Missing required argument: scope.",
+					"Provide the execution scope path.",
 					nil,
 				)), nil
 			}
@@ -61,6 +75,7 @@ func makeCreateWorktreeHandler(svc MCPServices) toolHandler {
 				BaseBranch:        req.GetString("base_branch", ""),
 				NoPackage:         req.GetBool("no_package", false),
 				PackageSelectors:  req.GetStringSlice("packages", nil),
+				PackageBaseBranch: getStringMap(req, "package_base_branches"),
 				GenerateWorkspace: req.GetBool("generate_workspace", false),
 				RootFiles:         req.GetStringSlice("copy_root_files", nil),
 				Yes:               req.GetBool("yes", true),
@@ -92,6 +107,8 @@ func makeAddRepoHandler(svc MCPServices) toolHandler {
 				WorkspaceName:       req.GetString("workspace_name", ""),
 				RepoSelectors:       req.GetStringSlice("repos", nil),
 				ExecutionScope:      req.GetString("scope", ""),
+				PackageBranchSource: getStringMap(req, "package_branch_source"),
+				PackageBaseBranch:   getStringMap(req, "package_base"),
 				SyncPolicy:          domain.AddRepoSyncPolicy(req.GetString("sync_policy", string(domain.AddRepoSyncAuto))),
 				ReuseExistingBranch: req.GetBool("reuse_existing_branch", false),
 				RootFiles:           req.GetStringSlice("copy_root_files", nil),
@@ -194,6 +211,31 @@ func makeGetVersionHandler(svc MCPServices) toolHandler {
 			return marshalResult(map[string]string{"version": svc.Version})
 		})
 	}
+}
+
+// getStringMap reads an object argument from the request as map[string]string.
+// Keys whose values are not strings are silently skipped.
+// Returns nil when the key is absent or not an object.
+func getStringMap(req mcplib.CallToolRequest, key string) map[string]string {
+	args := req.GetArguments()
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return nil
+	}
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	result := make(map[string]string, len(m))
+	for k, v := range m {
+		if s, ok := v.(string); ok {
+			result[k] = s
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 // marshalResult JSON-encodes v and returns it as a tool text result.
