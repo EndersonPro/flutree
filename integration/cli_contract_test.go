@@ -269,8 +269,11 @@ func TestCLIHelpListsExpectedCommands(t *testing.T) {
 	if res.code != 0 {
 		t.Fatalf("expected 0, got %d (%s)", res.code, res.stderr)
 	}
-	if !strings.Contains(res.stdout, "create") || !strings.Contains(res.stdout, "config") || !strings.Contains(res.stdout, "list") || !strings.Contains(res.stdout, "complete") || !strings.Contains(res.stdout, "clean") {
-		t.Fatalf("unexpected help output: %s", res.stdout)
+	want := []string{"create", "config", "list", "complete", "clean", "mcp"}
+	for _, cmd := range want {
+		if !strings.Contains(res.stdout, cmd) {
+			t.Errorf("help output missing command %q: %s", cmd, res.stdout)
+		}
 	}
 	if !strings.Contains(res.stdout, "flutree <subcommand> --help") {
 		t.Fatalf("expected subcommand help hint, got: %s", res.stdout)
