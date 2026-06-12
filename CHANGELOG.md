@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.1](https://github.com/EndersonPro/flutree/compare/v1.1.0...v1.1.1) (2026-06-12)
+
+
+### Bug Fixes
+
+* **ci:** chain goreleaser into release-please workflow since GITHUB_TOKEN tags cannot trigger workflows ([92bf72c](https://github.com/EndersonPro/flutree/commit/92bf72c7ddb8ce9c69fa42e8b6a8de06c1e6b4ec))
+* **release:** add missing MIT LICENSE file required by release archives ([88fcb17](https://github.com/EndersonPro/flutree/commit/88fcb17c689cf074e67fc441209e50f3f44d187c))
+
 ## [1.1.0](https://github.com/EndersonPro/flutree/compare/v1.0.2...v1.1.0) (2026-06-12)
 
 
