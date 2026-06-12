@@ -769,7 +769,6 @@ func runMCPServe(args []string) error {
 
 	configRepo := infraConfig.NewDefault()
 	services := infraMCP.MCPServices{
-		Version:  v,
 		List:     app.NewListService(&infraGit.Gateway{}, registry.NewDefault()),
 		Create:   app.NewCreateService(&infraGit.Gateway{}, registry.NewDefault(), prompt.New()),
 		AddRepo:  app.NewAddRepoService(&infraGit.Gateway{}, registry.NewDefault(), prompt.New()),

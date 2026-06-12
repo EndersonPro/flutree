@@ -205,10 +205,11 @@ func makeSetConfigHandler(svc MCPServices) toolHandler {
 }
 
 // makeGetVersionHandler returns the handler for the get_version tool.
-func makeGetVersionHandler(svc MCPServices) toolHandler {
+// version is the single authoritative value from BuildServer's parameter.
+func makeGetVersionHandler(version string, _ MCPServices) toolHandler {
 	return func(_ context.Context, _ mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 		return withPanicRecovery(func() (*mcpCallToolResult, error) {
-			return marshalResult(map[string]string{"version": svc.Version})
+			return marshalResult(map[string]string{"version": version})
 		})
 	}
 }

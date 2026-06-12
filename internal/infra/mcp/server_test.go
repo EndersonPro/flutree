@@ -19,9 +19,8 @@ var expectedToolNames = []string{
 	"get_version",
 }
 
-func fullServices(version string) MCPServices {
+func fullServices() MCPServices {
 	return MCPServices{
-		Version:  version,
 		List:     &fakeListRunner{},
 		Create:   &fakeCreateRunner{},
 		AddRepo:  &fakeAddRepoRunner{},
@@ -33,7 +32,7 @@ func fullServices(version string) MCPServices {
 }
 
 func TestBuildServerIsNotNil(t *testing.T) {
-	s, err := BuildServer("0.0.0-test", fullServices("0.0.0-test"))
+	s, err := BuildServer("0.0.0-test", fullServices())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -43,7 +42,7 @@ func TestBuildServerIsNotNil(t *testing.T) {
 }
 
 func TestBuildServerRegistersExactlyNineTools(t *testing.T) {
-	s, err := BuildServer("0.0.0-test", fullServices("0.0.0-test"))
+	s, err := BuildServer("0.0.0-test", fullServices())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -62,7 +61,7 @@ func TestBuildServerRegistersExactlyNineTools(t *testing.T) {
 
 func TestBuildServerGetVersionHandlerReturnsVersion(t *testing.T) {
 	const v = "1.2.3"
-	svc := fullServices(v)
+	svc := fullServices()
 	s, err := BuildServer(v, svc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -97,13 +96,13 @@ func TestBuildServerNilServiceReturnsError(t *testing.T) {
 		name string
 		svc  MCPServices
 	}{
-		{"nil List", MCPServices{Version: "0.0.0-test", Create: &fakeCreateRunner{}, AddRepo: &fakeAddRepoRunner{}, Complete: &fakeCompleteRunner{}, PubGet: &fakePubGetRunner{}, Clean: &fakeCleanRunner{}, Config: &fakeConfigRunner{}}},
-		{"nil Create", MCPServices{Version: "0.0.0-test", List: &fakeListRunner{}, AddRepo: &fakeAddRepoRunner{}, Complete: &fakeCompleteRunner{}, PubGet: &fakePubGetRunner{}, Clean: &fakeCleanRunner{}, Config: &fakeConfigRunner{}}},
-		{"nil AddRepo", MCPServices{Version: "0.0.0-test", List: &fakeListRunner{}, Create: &fakeCreateRunner{}, Complete: &fakeCompleteRunner{}, PubGet: &fakePubGetRunner{}, Clean: &fakeCleanRunner{}, Config: &fakeConfigRunner{}}},
-		{"nil Complete", MCPServices{Version: "0.0.0-test", List: &fakeListRunner{}, Create: &fakeCreateRunner{}, AddRepo: &fakeAddRepoRunner{}, PubGet: &fakePubGetRunner{}, Clean: &fakeCleanRunner{}, Config: &fakeConfigRunner{}}},
-		{"nil PubGet", MCPServices{Version: "0.0.0-test", List: &fakeListRunner{}, Create: &fakeCreateRunner{}, AddRepo: &fakeAddRepoRunner{}, Complete: &fakeCompleteRunner{}, Clean: &fakeCleanRunner{}, Config: &fakeConfigRunner{}}},
-		{"nil Clean", MCPServices{Version: "0.0.0-test", List: &fakeListRunner{}, Create: &fakeCreateRunner{}, AddRepo: &fakeAddRepoRunner{}, Complete: &fakeCompleteRunner{}, PubGet: &fakePubGetRunner{}, Config: &fakeConfigRunner{}}},
-		{"nil Config", MCPServices{Version: "0.0.0-test", List: &fakeListRunner{}, Create: &fakeCreateRunner{}, AddRepo: &fakeAddRepoRunner{}, Complete: &fakeCompleteRunner{}, PubGet: &fakePubGetRunner{}, Clean: &fakeCleanRunner{}}},
+		{"nil List", MCPServices{Create: &fakeCreateRunner{}, AddRepo: &fakeAddRepoRunner{}, Complete: &fakeCompleteRunner{}, PubGet: &fakePubGetRunner{}, Clean: &fakeCleanRunner{}, Config: &fakeConfigRunner{}}},
+		{"nil Create", MCPServices{List: &fakeListRunner{}, AddRepo: &fakeAddRepoRunner{}, Complete: &fakeCompleteRunner{}, PubGet: &fakePubGetRunner{}, Clean: &fakeCleanRunner{}, Config: &fakeConfigRunner{}}},
+		{"nil AddRepo", MCPServices{List: &fakeListRunner{}, Create: &fakeCreateRunner{}, Complete: &fakeCompleteRunner{}, PubGet: &fakePubGetRunner{}, Clean: &fakeCleanRunner{}, Config: &fakeConfigRunner{}}},
+		{"nil Complete", MCPServices{List: &fakeListRunner{}, Create: &fakeCreateRunner{}, AddRepo: &fakeAddRepoRunner{}, PubGet: &fakePubGetRunner{}, Clean: &fakeCleanRunner{}, Config: &fakeConfigRunner{}}},
+		{"nil PubGet", MCPServices{List: &fakeListRunner{}, Create: &fakeCreateRunner{}, AddRepo: &fakeAddRepoRunner{}, Complete: &fakeCompleteRunner{}, Clean: &fakeCleanRunner{}, Config: &fakeConfigRunner{}}},
+		{"nil Clean", MCPServices{List: &fakeListRunner{}, Create: &fakeCreateRunner{}, AddRepo: &fakeAddRepoRunner{}, Complete: &fakeCompleteRunner{}, PubGet: &fakePubGetRunner{}, Config: &fakeConfigRunner{}}},
+		{"nil Config", MCPServices{List: &fakeListRunner{}, Create: &fakeCreateRunner{}, AddRepo: &fakeAddRepoRunner{}, Complete: &fakeCompleteRunner{}, PubGet: &fakePubGetRunner{}, Clean: &fakeCleanRunner{}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -46,8 +46,11 @@ type configRunner interface {
 // handlers invoke. All interface fields must be non-nil; BuildServer returns
 // an error listing every nil field so callers get an explicit failure rather
 // than an opaque panic at call time. withPanicRecovery remains as a last resort.
+//
+// Version is intentionally NOT a field here; BuildServer receives version as an
+// explicit parameter and passes it directly to makeGetVersionHandler, keeping
+// a single authoritative source and preventing silent divergence.
 type MCPServices struct {
-	Version  string
 	List     listRunner
 	Create   createRunner
 	AddRepo  addRepoRunner
@@ -97,7 +100,7 @@ func BuildServer(version string, services MCPServices) (*mcpserver.MCPServer, er
 	s.AddTool(buildCleanWorktreeTool(), makeCleanWorktreeHandler(services))
 	s.AddTool(buildGetConfigTool(), makeGetConfigHandler(services))
 	s.AddTool(buildSetConfigTool(), makeSetConfigHandler(services))
-	s.AddTool(buildGetVersionTool(), makeGetVersionHandler(services))
+	s.AddTool(buildGetVersionTool(), makeGetVersionHandler(version, services))
 
 	return s, nil
 }

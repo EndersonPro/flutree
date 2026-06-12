@@ -557,8 +557,7 @@ func TestSetConfig_Success(t *testing.T) {
 
 func TestGetVersion_ReturnsVersion(t *testing.T) {
 	const v = "1.2.3"
-	svc := MCPServices{Version: v}
-	handler := makeGetVersionHandler(svc)
+	handler := makeGetVersionHandler(v, MCPServices{})
 	result, err := handler(context.Background(), makeRequest(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -579,8 +578,8 @@ func TestGetVersion_ReturnsVersion(t *testing.T) {
 func TestGetVersion_DoesNotCallAnyService(t *testing.T) {
 	// All service fields are nil — if get_version calls any, it will panic
 	// and withPanicRecovery would turn it into an error result.
-	svc := MCPServices{Version: "0.9.9"}
-	handler := makeGetVersionHandler(svc)
+	// version is passed directly; no service field is touched.
+	handler := makeGetVersionHandler("0.9.9", MCPServices{})
 	result, err := handler(context.Background(), makeRequest(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
