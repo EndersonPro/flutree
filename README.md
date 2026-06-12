@@ -27,6 +27,7 @@
 - [🔄 Version and update](#-version-and-update)
 - [🧪 Testing](#-testing)
 - [🤖 Non-interactive behavior](#-non-interactive-behavior)
+- [🤖 MCP Server](#-mcp-server)
 - [🗂️ Registry](#%EF%B8%8F-registry)
 - [🏗️ Project structure](#%EF%B8%8F-project-structure)
 - [🤝 Contributing](#-contributing)
@@ -330,6 +331,69 @@ go build -o ./flutree ./cmd/flutree
 - `create --non-interactive` requires `--reuse-existing-branch` when the target branch already exists.
 - `complete` requires confirmation unless `--yes` is passed.
 - `complete --non-interactive` without `--yes` fails fast by design.
+
+## 🤖 MCP Server
+
+flutree ships a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that lets AI coding agents — Claude Code, OpenCode, Codex, and any MCP-compatible client — drive the full worktree lifecycle without leaving the editor.
+
+### Quickstart
+
+```bash
+flutree mcp install   # auto-detect clients and write config
+# restart your AI coding client
+```
+
+That is all. The installer detects which clients are present, writes the entry non-destructively (existing entries are preserved unless `--force` is passed), and prints one line per client.
+
+### MCP tools
+
+| Tool | What it does | Key arguments |
+|------|-------------|---------------|
+| `list_worktrees` | List registered worktrees | `show_all`, `global_scope` |
+| `create_worktree` | Create a new managed worktree | `name` (req), `root_repo` (req), `scope` (req), `branch`, `base_branch`, `no_package`, `packages`, `package_base_branches`, `yes`, `reuse_existing_branch`, `generate_workspace`, `copy_root_files` |
+| `add_repo` | Add repositories to an existing workspace | `workspace_name` (req), `repos` (req), `scope`, `package_branch_source`, `package_base`, `sync_policy`, `reuse_existing_branch`, `copy_root_files` |
+| `complete_worktree` | Mark a worktree complete and remove it | `name` (req), `force` |
+| `pubget` | Run `pub get` across all packages in a worktree | `name` (req), `force` |
+| `clean_worktree` | Clean stale worktrees in the current scope | `force` |
+| `get_config` | Read a flutree config value | `key` (req) — e.g. `scope.root` |
+| `set_config` | Write a flutree config value | `key` (req), `value` (req) |
+| `get_version` | Return the flutree binary version | — |
+
+### `mcp install` flags
+
+| Flag | Description |
+|------|-------------|
+| `--client <names>` | Comma-separated list of clients to target: `claude-code`, `opencode`, `codex`. Omit to target all detected clients. |
+| `--force` | Overwrite an existing entry. For clients whose config contains JSONC/TOML comments, `--force` is also required to strip comments before merging (comments are not preserved on the round-trip). |
+| `--json` | Emit a JSON object keyed by client name with `status`, `config_path`, and `message` fields. |
+
+### Per-client config file locations
+
+| Client | Config file |
+|--------|-------------|
+| Claude Code | `~/.claude.json` → `mcpServers.flutree` |
+| OpenCode | `~/.config/opencode/opencode.json` → `mcp.flutree` |
+| Codex | `~/.codex/config.toml` → `[mcp_servers.flutree]` |
+
+Detection: each client is considered present when its binary is on `PATH` **or** its config directory/file already exists.
+
+### Manual configuration (unsupported clients)
+
+For clients not yet handled by `mcp install`, add the following stdio entry manually:
+
+```json
+{
+  "mcpServers": {
+    "flutree": {
+      "type": "stdio",
+      "command": "/path/to/flutree",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+Replace `/path/to/flutree` with the output of `which flutree`. The server reads from stdin and writes to stdout using JSON-RPC; do not pass `--json` to `mcp serve` (it would corrupt the transport framing).
 
 ## Exit Codes
 
