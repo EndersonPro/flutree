@@ -8,7 +8,12 @@ import (
 	"testing"
 )
 
-func TestReleasePleaseWorkflowOrchestratesBrewPublish(t *testing.T) {
+func TestReleasePleaseWorkflowDoesNotPublishBrewDirectly(t *testing.T) {
+	// Phase-2 retirement (TASK-011): the release-brew job was removed from
+	// release-please.yml because goreleaser uploads an asset with the same name
+	// (flutree-VERSION-macos-arm64.tar.gz), causing a 422 already_exists collision
+	// that aborted goreleaser before its brews/scoops publishers ran.
+	// goreleaser is now the sole release publisher.
 	root := projectRoot(t)
 	workflowPath := filepath.Join(root, ".github", "workflows", "release-please.yml")
 	b, err := os.ReadFile(workflowPath)
@@ -17,25 +22,28 @@ func TestReleasePleaseWorkflowOrchestratesBrewPublish(t *testing.T) {
 	}
 	content := string(b)
 
+	// The release-brew job key and its distinctive tokens must be absent.
+	forbidden := []string{
+		`release-brew:`,
+		`./scripts/package_macos.sh`,
+		`./scripts/verify_macos_binary.sh`,
+		`Checkout Homebrew tap repository`,
+		`Update tap formula to released version`,
+	}
+	for _, token := range forbidden {
+		if strings.Contains(content, token) {
+			t.Fatalf("release-please.yml must not contain release-brew job token %q (goreleaser is the sole publisher)", token)
+		}
+	}
+
+	// The workflow-level outputs wiring must still be present (goreleaser job needs them).
 	required := []string{
 		`release_created: ${{ steps.release.outputs.release_created }}`,
 		`tag_name: ${{ steps.release.outputs.tag_name }}`,
-		`needs: release-please`,
-		`if: ${{ needs.release-please.outputs.release_created == 'true' }}`,
-		`TAG: ${{ needs.release-please.outputs.tag_name }}`,
-		`./scripts/check_version_contract.sh --tag "${TAG}"`,
-		`VERSION="$(tr -d '[:space:]' < VERSION)"`,
-		`flutree-${VERSION}-macos-${ARCH}.tar.gz`,
-		`flutree-${VERSION}-macos-${ARCH}.sha256`,
-		`tag_name: ${{ env.TAG }}`,
-		`./scripts/verify_macos_binary.sh "dist/$TARBALL" --expected-version "$VERSION"`,
-		`repository: EndersonPro/homebrew-flutree`,
-		`HOMEBREW_TAP_TOKEN`,
-		`if [[ -z "${TAG}" ]]; then`,
 	}
 	for _, token := range required {
 		if !strings.Contains(content, token) {
-			t.Fatalf("workflow missing required token %q", token)
+			t.Fatalf("release-please.yml missing required orchestration token %q", token)
 		}
 	}
 }
