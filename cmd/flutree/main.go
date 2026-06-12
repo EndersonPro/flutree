@@ -720,7 +720,7 @@ func runUpdate(args []string) error {
 		return domain.NewError(domain.CategoryInput, 2, "Update command does not accept positional arguments.", "Usage: flutree update [--check|--apply]", nil)
 	}
 
-	service := app.NewUpdateService(&infraUpdate.BrewGateway{})
+	service := app.NewUpdateService(infraUpdate.NewBrewGateway())
 	result, err := service.Run(domain.UpdateInput{Check: *check, Apply: *apply})
 	if err != nil {
 		return err
