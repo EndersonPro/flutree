@@ -34,70 +34,83 @@ func main() {
 		return
 	}
 
-	cmd := os.Args[1]
-	// Check if --json flag is passed early to use JSON error formatting
+	// Check if --json flag is passed early to use JSON error formatting.
+	// It may appear as the very first argument (e.g. "flutree --json mcp serve")
+	// or anywhere in the argument list.
 	jsonOutput := containsFlag(os.Args, "--json")
+
+	// Determine the command token. When --json appears as os.Args[1], the real
+	// command is os.Args[2]; otherwise os.Args[1] is the command as usual.
+	args := os.Args[1:]
+	if len(args) > 0 && args[0] == "--json" {
+		args = args[1:] // strip the leading --json; command is now args[0]
+	}
+	if len(args) == 0 {
+		printHelp()
+		return
+	}
+	cmd := args[0]
 
 	switch cmd {
 	case "create":
 		if jsonOutput {
-			runtime.ExitOnErrorJSON(runCreate(os.Args[2:]), true)
+			runtime.ExitOnErrorJSON(runCreate(args[1:]), true)
 		} else {
-			runtime.ExitOnError(runCreate(os.Args[2:]))
+			runtime.ExitOnError(runCreate(args[1:]))
 		}
 	case "add-repo":
 		if jsonOutput {
-			runtime.ExitOnErrorJSON(runAddRepo(os.Args[2:]), true)
+			runtime.ExitOnErrorJSON(runAddRepo(args[1:]), true)
 		} else {
-			runtime.ExitOnError(runAddRepo(os.Args[2:]))
+			runtime.ExitOnError(runAddRepo(args[1:]))
 		}
 	case "list":
 		if jsonOutput {
-			runtime.ExitOnErrorJSON(runList(os.Args[2:]), true)
+			runtime.ExitOnErrorJSON(runList(args[1:]), true)
 		} else {
-			runtime.ExitOnError(runList(os.Args[2:]))
+			runtime.ExitOnError(runList(args[1:]))
 		}
 	case "complete":
 		if jsonOutput {
-			runtime.ExitOnErrorJSON(runComplete(os.Args[2:]), true)
+			runtime.ExitOnErrorJSON(runComplete(args[1:]), true)
 		} else {
-			runtime.ExitOnError(runComplete(os.Args[2:]))
+			runtime.ExitOnError(runComplete(args[1:]))
 		}
 	case "pubget":
 		if jsonOutput {
-			runtime.ExitOnErrorJSON(runPubGet(os.Args[2:]), true)
+			runtime.ExitOnErrorJSON(runPubGet(args[1:]), true)
 		} else {
-			runtime.ExitOnError(runPubGet(os.Args[2:]))
+			runtime.ExitOnError(runPubGet(args[1:]))
 		}
 	case "clean":
 		if jsonOutput {
-			runtime.ExitOnErrorJSON(runClean(os.Args[2:]), true)
+			runtime.ExitOnErrorJSON(runClean(args[1:]), true)
 		} else {
-			runtime.ExitOnError(runClean(os.Args[2:]))
+			runtime.ExitOnError(runClean(args[1:]))
 		}
 	case "update":
 		if jsonOutput {
-			runtime.ExitOnErrorJSON(runUpdate(os.Args[2:]), true)
+			runtime.ExitOnErrorJSON(runUpdate(args[1:]), true)
 		} else {
-			runtime.ExitOnError(runUpdate(os.Args[2:]))
+			runtime.ExitOnError(runUpdate(args[1:]))
 		}
 	case "config":
 		if jsonOutput {
-			runtime.ExitOnErrorJSON(runConfig(os.Args[2:]), true)
+			runtime.ExitOnErrorJSON(runConfig(args[1:]), true)
 		} else {
-			runtime.ExitOnError(runConfig(os.Args[2:]))
+			runtime.ExitOnError(runConfig(args[1:]))
 		}
 	case "version", "--version":
 		if jsonOutput {
-			runtime.ExitOnErrorJSON(runVersion(os.Args[2:]), true)
+			runtime.ExitOnErrorJSON(runVersion(args[1:]), true)
 		} else {
-			runtime.ExitOnError(runVersion(os.Args[2:]))
+			runtime.ExitOnError(runVersion(args[1:]))
 		}
 	case "mcp":
 		if jsonOutput {
-			runtime.ExitOnErrorJSON(runMCP(os.Args[2:]), true)
+			runtime.ExitOnErrorJSON(runMCP(args[1:]), true)
 		} else {
-			runtime.ExitOnError(runMCP(os.Args[2:]))
+			runtime.ExitOnError(runMCP(args[1:]))
 		}
 	case "--help", "-h", "help":
 		printHelp()
@@ -750,7 +763,19 @@ func runMCP(args []string) error {
 }
 
 // runMCPServe starts the MCP stdio server. It blocks until stdin is closed.
+//
+// --json is explicitly rejected regardless of where it appears on the command
+// line (e.g. "flutree mcp serve --json" or "flutree --json mcp serve").
+// mcp serve's stdout is the JSON-RPC transport; mixing in JSON-formatted error
+// envelopes would corrupt the framing that clients rely on.
 func runMCPServe(args []string) error {
+	if containsFlag(os.Args, "--json") {
+		return domain.NewError(domain.CategoryInput, 2,
+			"--json is not supported for 'mcp serve'.",
+			"The stdout of 'mcp serve' is the JSON-RPC transport; --json output would corrupt it.",
+			nil,
+		)
+	}
 	fs := newFlagSet("mcp serve", printMCPHelp)
 	if len(args) > 0 && isHelpToken(args[0]) {
 		printMCPHelp()
@@ -813,10 +838,17 @@ func runMCPInstall(args []string) error {
 		}
 	}
 
+	// Validate the client filter at the CLI layer before any I/O so the error
+	// category is correct: unknown-client is a user input error (CategoryInput,
+	// exit 2); binary-resolution and other runtime failures are unexpected
+	// (CategoryUnexpected, exit 1).
 	installer := mcpinstall.DefaultInstaller()
+	if err := installer.ValidateClients(clients); err != nil {
+		return domain.NewError(domain.CategoryInput, 2, err.Error(), "", err)
+	}
 	results, err := installer.Run(clients, *force)
 	if err != nil {
-		return domain.NewError(domain.CategoryInput, 2, err.Error(), "", err)
+		return domain.NewError(domain.CategoryUnexpected, 1, err.Error(), "", err)
 	}
 
 	if *jsonFlag {

@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -1716,9 +1717,15 @@ type runMCPServeResult struct {
 // closes stdin, and returns whatever the process wrote to stdout and stderr.
 // It does NOT use runCLI because that helper combines stdout+stderr and we need
 // stdout alone to parse JSON-RPC frames.
+//
+// A 10-second timeout is applied via context so a hung server never blocks the
+// suite indefinitely.
 func runMCPServe(t *testing.T, bin, cwd string, env []string, jsonrpcInput string) runMCPServeResult {
 	t.Helper()
-	cmd := exec.Command(bin, "mcp", "serve")
+	const timeout = 10 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "mcp", "serve")
 	cmd.Dir = cwd
 	cmd.Env = env
 	cmd.Stdin = strings.NewReader(jsonrpcInput)
@@ -1726,6 +1733,9 @@ func runMCPServe(t *testing.T, bin, cwd string, env []string, jsonrpcInput strin
 	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = &stderrBuf
 	err := cmd.Run()
+	if ctx.Err() != nil {
+		t.Fatalf("runMCPServe: process exceeded %s deadline (hung server); partial stdout=%q stderr=%q", timeout, stdoutBuf.String(), stderrBuf.String())
+	}
 	code := 0
 	if err != nil {
 		code = 1
@@ -1876,15 +1886,55 @@ func TestMCPServeWritesNothingExtraToStdout(t *testing.T) {
 	}
 }
 
-// TestMCPServeUnknownCommandReturnsError verifies that "flutree mcp unknown"
-// exits with a non-zero code and an error message.
+// TestMCPServeUnknownSubcommandReturnsError verifies that "flutree mcp unknown"
+// exits with a non-zero code and an error message that names the bad token.
 func TestMCPServeUnknownSubcommandReturnsError(t *testing.T) {
 	bin := buildCLI(t)
 	home := t.TempDir()
 
-	res := runCLI(t, bin, projectRoot(t), testEnv(home), "", "mcp", "unknown")
+	const badSub = "unknown"
+	res := runCLI(t, bin, projectRoot(t), testEnv(home), "", "mcp", badSub)
 	if res.code == 0 {
 		t.Fatalf("expected non-zero exit for unknown mcp subcommand, got 0; stdout=%s", res.stdout)
+	}
+	combined := res.stdout + res.stderr
+	if !strings.Contains(combined, badSub) {
+		t.Fatalf("expected error output to mention the unknown subcommand %q; got: %s", badSub, combined)
+	}
+}
+
+// TestMCPServeRejectsJsonFlagSuffix verifies that "flutree mcp serve --json"
+// exits with a non-zero code and a clear rejection message.
+// stdout must stay clean (no non-JSON lines) so JSON-RPC clients are not confused.
+func TestMCPServeRejectsJsonFlagSuffix(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	res := runCLI(t, bin, projectRoot(t), testEnv(home), "", "mcp", "serve", "--json")
+	if res.code == 0 {
+		t.Fatalf("expected non-zero exit for 'mcp serve --json', got 0; stdout=%s stderr=%s", res.stdout, res.stderr)
+	}
+	combined := res.stdout + res.stderr
+	if !strings.Contains(combined, "--json") {
+		t.Fatalf("expected rejection message to mention --json; got: %s", combined)
+	}
+}
+
+// TestMCPServeRejectsJsonFlagPrefix verifies that "flutree --json mcp serve"
+// also exits with a non-zero code and a rejection message.
+// The global --json flag is meaningful for other commands but meaningless and
+// disruptive for mcp serve (whose stdout is JSON-RPC only).
+func TestMCPServeRejectsJsonFlagPrefix(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	res := runCLI(t, bin, projectRoot(t), testEnv(home), "", "--json", "mcp", "serve")
+	if res.code == 0 {
+		t.Fatalf("expected non-zero exit for '--json mcp serve', got 0; stdout=%s stderr=%s", res.stdout, res.stderr)
+	}
+	combined := res.stdout + res.stderr
+	if !strings.Contains(combined, "--json") {
+		t.Fatalf("expected rejection message to mention --json; got: %s", combined)
 	}
 }
 
@@ -1893,7 +1943,10 @@ func TestMCPServeUnknownSubcommandReturnsError(t *testing.T) {
 // --------------------------------------------------------------------------
 
 // TestMCPInstallInvalidClientExitsNonZero verifies that --client with an
-// unknown value causes exit 1 and an error message before any file is written.
+// unknown value causes a non-zero exit and an error message. Because the
+// installer validates the client filter before any I/O, no config files are
+// written to disk. The test asserts this by confirming the config paths that
+// the three bundled mergers would touch are absent from the HOME directory.
 func TestMCPInstallInvalidClientExitsNonZero(t *testing.T) {
 	bin := buildCLI(t)
 	home := t.TempDir()
@@ -1905,6 +1958,19 @@ func TestMCPInstallInvalidClientExitsNonZero(t *testing.T) {
 	combined := res.stderr + res.stdout
 	if !strings.Contains(combined, "foobar") {
 		t.Fatalf("expected error message to mention the unknown client name; got: %s", combined)
+	}
+
+	// Verify that no config files were written (validateFilter fires before any I/O).
+	noWritePaths := []string{
+		filepath.Join(home, ".claude.json"),
+		filepath.Join(home, ".opencode.json"),
+		filepath.Join(home, ".config", "opencode", "config.json"),
+		filepath.Join(home, ".config", "codex", "config.toml"),
+	}
+	for _, p := range noWritePaths {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("expected no file written at %s, but it exists after invalid-client rejection", p)
+		}
 	}
 }
 

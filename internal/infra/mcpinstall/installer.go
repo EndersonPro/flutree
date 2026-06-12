@@ -94,6 +94,15 @@ func (inst *Installer) Run(clients []string, force bool) ([]InstallResult, error
 	return results, nil
 }
 
+// ValidateClients checks that every name in clients is a known merger name.
+// It returns a descriptive error when an unknown name is found; nil otherwise.
+// Callers may use this before Run to assign the correct error category: an
+// unknown client is a user-input error, while Run's other failure modes are
+// runtime/unexpected errors.
+func (inst *Installer) ValidateClients(clients []string) error {
+	return inst.validateFilter(clients)
+}
+
 // validateFilter checks that every name in clients is a known merger name.
 func (inst *Installer) validateFilter(clients []string) error {
 	if len(clients) == 0 {
