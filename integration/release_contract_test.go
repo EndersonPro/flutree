@@ -209,9 +209,10 @@ func TestGoreleaserYamlTokens(t *testing.T) {
 		`brews`,
 		`EndersonPro/scoop-flutree`,
 		`EndersonPro/homebrew-flutree`,
-		// format_overrides block must exist AND use format: (not formats:) — guards against v1-style false positive
+		// format_overrides block must exist and use the v2 `formats:` list syntax
+		// (singular `format:` is deprecated in goreleaser v2.6+)
 		`format_overrides:`,
-		`format: zip`,
+		`formats: ["zip"]`,
 		`checksums.txt`,
 		// darwin→macos name mapping must be present (goreleaser renders .Os as "darwin"; Homebrew URLs use "macos")
 		`}}macos{{`,
