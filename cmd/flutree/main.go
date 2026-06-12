@@ -941,6 +941,7 @@ func printHelp() {
 	fmt.Println("  " + cmdStyle.Render("pubget") + " <name> [--force]        " + muted.Render("Run pub get across workspace packages"))
 	fmt.Println("  " + cmdStyle.Render("clean") + " [--force]               " + muted.Render("Clean current managed worktree"))
 	fmt.Println("  " + cmdStyle.Render("update") + " [--check|--apply]       " + muted.Render("Check or apply brew updates"))
+	fmt.Println("  " + cmdStyle.Render("mcp") + " <serve|install> [options] " + muted.Render("Run or install the MCP server for AI agents"))
 	fmt.Println("  " + cmdStyle.Render("version") + "                       " + muted.Render("Show version"))
 	fmt.Println("")
 	fmt.Println(muted.Render("Tip: Use `flutree <subcommand> --help` to inspect command flags."))
