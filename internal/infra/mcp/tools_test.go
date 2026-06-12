@@ -30,6 +30,7 @@ type fakeCreateRunner struct {
 	result                    domain.CreateResult
 	nonInteractiveCaptured    bool
 	capturedPackageBaseBranch map[string]string
+	capturedSyncWithRemote    bool
 }
 
 func (f *fakeCreateRunner) BuildDryPlan(input domain.CreateInput) (domain.CreateDryPlan, error) {
@@ -42,6 +43,7 @@ func (f *fakeCreateRunner) BuildDryPlan(input domain.CreateInput) (domain.Create
 }
 
 func (f *fakeCreateRunner) Apply(plan domain.CreateDryPlan, opts domain.CreateApplyOptions) (domain.CreateResult, error) {
+	f.capturedSyncWithRemote = opts.SyncWithRemote
 	if f.applyErr != nil {
 		return domain.CreateResult{}, f.applyErr
 	}
@@ -182,9 +184,10 @@ func TestCreateWorktree_HappyPath(t *testing.T) {
 	svc := MCPServices{Create: fake}
 	handler := makeCreateWorktreeHandler(svc)
 	result, err := handler(context.Background(), makeRequest(map[string]any{
-		"name":      "my-wt",
-		"root_repo": "/repos/myapp",
-		"scope":     "/repos",
+		"name":        "my-wt",
+		"root_repo":   "/repos/myapp",
+		"scope":       "/repos",
+		"base_branch": "main",
 	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -201,8 +204,9 @@ func TestCreateWorktree_MissingRootRepo(t *testing.T) {
 	svc := MCPServices{Create: &fakeCreateRunner{}}
 	handler := makeCreateWorktreeHandler(svc)
 	result, err := handler(context.Background(), makeRequest(map[string]any{
-		"name":  "my-wt",
-		"scope": "/repos",
+		"name":        "my-wt",
+		"scope":       "/repos",
+		"base_branch": "main",
 		// root_repo intentionally absent
 	}))
 	if err != nil {
@@ -253,8 +257,9 @@ func TestCreateWorktree_MissingScope(t *testing.T) {
 	svc := MCPServices{Create: &fakeCreateRunner{}}
 	handler := makeCreateWorktreeHandler(svc)
 	result, err := handler(context.Background(), makeRequest(map[string]any{
-		"name":      "my-wt",
-		"root_repo": "/repos/myapp",
+		"name":        "my-wt",
+		"root_repo":   "/repos/myapp",
+		"base_branch": "main",
 		// scope intentionally absent
 	}))
 	if err != nil {
@@ -283,6 +288,7 @@ func TestCreateWorktree_PackageBaseBranchesWired(t *testing.T) {
 		"name":                  "my-wt",
 		"root_repo":             "/repos/myapp",
 		"scope":                 "/repos",
+		"base_branch":           "main",
 		"package_base_branches": map[string]any{"pkg-a": "main", "pkg-b": "develop"},
 	}))
 	if err != nil {
@@ -299,6 +305,104 @@ func TestCreateWorktree_PackageBaseBranchesWired(t *testing.T) {
 	}
 	if fake.capturedPackageBaseBranch["pkg-b"] != "develop" {
 		t.Errorf("expected pkg-b=develop, got %q", fake.capturedPackageBaseBranch["pkg-b"])
+	}
+}
+
+func TestCreateWorktree_MissingBaseBranch(t *testing.T) {
+	svc := MCPServices{Create: &fakeCreateRunner{}}
+	handler := makeCreateWorktreeHandler(svc)
+	result, err := handler(context.Background(), makeRequest(map[string]any{
+		"name":      "my-wt",
+		"root_repo": "/repos/myapp",
+		"scope":     "/repos",
+		// base_branch intentionally absent
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected isError=true for missing base_branch")
+	}
+	text := extractTextContent(t, result.Content)
+	var payload struct {
+		Category string `json:"category"`
+	}
+	if jsonErr := json.Unmarshal([]byte(text), &payload); jsonErr != nil {
+		t.Fatalf("error payload not valid JSON: %v", jsonErr)
+	}
+	if payload.Category != "input" {
+		t.Errorf("expected category=input, got %q", payload.Category)
+	}
+}
+
+func TestCreateWorktree_EmptyBaseBranch(t *testing.T) {
+	svc := MCPServices{Create: &fakeCreateRunner{}}
+	handler := makeCreateWorktreeHandler(svc)
+	result, err := handler(context.Background(), makeRequest(map[string]any{
+		"name":        "my-wt",
+		"root_repo":   "/repos/myapp",
+		"scope":       "/repos",
+		"base_branch": "",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected isError=true for empty base_branch")
+	}
+	text := extractTextContent(t, result.Content)
+	var payload struct {
+		Category string `json:"category"`
+	}
+	if jsonErr := json.Unmarshal([]byte(text), &payload); jsonErr != nil {
+		t.Fatalf("error payload not valid JSON: %v", jsonErr)
+	}
+	if payload.Category != "input" {
+		t.Errorf("expected category=input, got %q", payload.Category)
+	}
+}
+
+func TestCreateWorktree_SyncWithRemoteTrue(t *testing.T) {
+	fake := &fakeCreateRunner{}
+	svc := MCPServices{Create: fake}
+	handler := makeCreateWorktreeHandler(svc)
+	result, err := handler(context.Background(), makeRequest(map[string]any{
+		"name":             "my-wt",
+		"root_repo":        "/repos/myapp",
+		"scope":            "/repos",
+		"base_branch":      "main",
+		"sync_with_remote": true,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", extractTextContent(t, result.Content))
+	}
+	if !fake.capturedSyncWithRemote {
+		t.Error("expected SyncWithRemote=true to be forwarded to CreateApplyOptions")
+	}
+}
+
+func TestCreateWorktree_SyncWithRemoteDefaultFalse(t *testing.T) {
+	fake := &fakeCreateRunner{}
+	svc := MCPServices{Create: fake}
+	handler := makeCreateWorktreeHandler(svc)
+	result, err := handler(context.Background(), makeRequest(map[string]any{
+		"name":        "my-wt",
+		"root_repo":   "/repos/myapp",
+		"scope":       "/repos",
+		"base_branch": "main",
+		// sync_with_remote intentionally absent
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", extractTextContent(t, result.Content))
+	}
+	if fake.capturedSyncWithRemote {
+		t.Error("expected SyncWithRemote=false when sync_with_remote is not provided")
 	}
 }
 

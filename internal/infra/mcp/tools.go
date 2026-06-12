@@ -43,6 +43,7 @@ func makeCreateWorktreeHandler(svc MCPServices) toolHandler {
 			name := req.GetString("name", "")
 			rootRepo := req.GetString("root_repo", "")
 			scope := req.GetString("scope", "")
+			baseBranch := req.GetString("base_branch", "")
 
 			if name == "" {
 				return toToolError(domain.NewError(domain.CategoryInput, 2,
@@ -65,6 +66,13 @@ func makeCreateWorktreeHandler(svc MCPServices) toolHandler {
 					nil,
 				)), nil
 			}
+			if baseBranch == "" {
+				return toToolError(domain.NewError(domain.CategoryInput, 2,
+					"Missing required argument: base_branch.",
+					"Ask the user which branch to base the new worktree on instead of guessing.",
+					nil,
+				)), nil
+			}
 
 			reuseExistingBranch := req.GetBool("reuse_existing_branch", false)
 			input := domain.CreateInput{
@@ -72,7 +80,7 @@ func makeCreateWorktreeHandler(svc MCPServices) toolHandler {
 				RootSelector:      rootRepo,
 				ExecutionScope:    scope,
 				Branch:            req.GetString("branch", ""),
-				BaseBranch:        req.GetString("base_branch", ""),
+				BaseBranch:        baseBranch,
 				NoPackage:         req.GetBool("no_package", false),
 				PackageSelectors:  req.GetStringSlice("packages", nil),
 				PackageBaseBranch: getStringMap(req, "package_base_branches"),
@@ -89,6 +97,7 @@ func makeCreateWorktreeHandler(svc MCPServices) toolHandler {
 			opts := domain.CreateApplyOptions{
 				NonInteractive:      true,
 				ReuseExistingBranch: reuseExistingBranch,
+				SyncWithRemote:      req.GetBool("sync_with_remote", false),
 			}
 			result, err := svc.Create.Apply(plan, opts)
 			if err != nil {
