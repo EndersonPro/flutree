@@ -23,9 +23,9 @@ archives:
     format_overrides:
       - goos: windows
         formats: ["zip"]
-    # darwin→macos mapping: goreleaser renders .Os as "darwin" but the existing
-    # Homebrew formula URLs (from release-please release-brew job) use "macos"
-    # (e.g. flutree-1.0.2-macos-arm64.tar.gz). This template keeps both in sync.
+    # darwin→macos mapping: goreleaser renders .Os as "darwin" but Homebrew
+    # formula URLs use "macos" (e.g. flutree-1.0.2-macos-arm64.tar.gz).
+    # This template produces that expected name for the brews publisher below.
     name_template: "{{ .ProjectName }}-{{ .Version }}-{{ if eq .Os \"darwin\" }}macos{{ else }}{{ .Os }}{{ end }}-{{ .Arch }}"
     files:
       - LICENSE
@@ -38,10 +38,10 @@ checksum:
 # append multi-platform assets — never replace/recreate the release — so that
 # the release-please release notes are preserved intact.
 #
-# Phase-1 coexistence (TASK-010/011): release-please's release-brew job still
-# publishes the macos-arm64 asset and updates the Homebrew formula; goreleaser
-# appends the remaining platform assets. Once the side-by-side run is validated
-# manually (TASK-010), the release-brew job will be retired (TASK-011).
+# goreleaser is the sole publisher (TASK-011): the former release-brew job was
+# retired because it uploaded an asset with the same name as goreleaser's
+# darwin-arm64 tarball, causing a 422 already_exists collision that aborted
+# goreleaser before its brews/scoops publishers ran.
 release:
   mode: append
 
