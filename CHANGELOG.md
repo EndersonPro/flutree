@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.1](https://github.com/EndersonPro/flutree/compare/v1.0.0...v1.0.1) (2026-06-12)
+
+
+### Bug Fixes
+
+* **app:** carry pubspec.yaml dependency_overrides into pubspec_overrides.yaml ([128c938](https://github.com/EndersonPro/flutree/commit/128c93818b627fefc09e6eef9b85209353706520))
+* **cli:** list mcp command in flutree --help ([587a6ee](https://github.com/EndersonPro/flutree/commit/587a6eefc6e6fe90fdcdba8eb630a5d7cfdf4af2))
+
 ## [1.0.0](https://github.com/EndersonPro/flutree/compare/v0.17.0...v1.0.0) (2026-06-12)
 
 
