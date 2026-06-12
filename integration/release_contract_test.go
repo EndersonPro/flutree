@@ -183,6 +183,8 @@ func TestGoreleaserReleaseWorkflowExists(t *testing.T) {
 		`release --clean`,
 		`GITHUB_TOKEN`,
 		`HOMEBREW_TAP_TOKEN`,
+		// goreleaser version must be pinned to a concrete v2 release, not "latest"
+		`version: "v2.`,
 	}
 	for _, token := range required {
 		if !strings.Contains(content, token) {
@@ -207,8 +209,14 @@ func TestGoreleaserYamlTokens(t *testing.T) {
 		`brews`,
 		`EndersonPro/scoop-flutree`,
 		`EndersonPro/homebrew-flutree`,
+		// format_overrides block must exist AND use format: (not formats:) — guards against v1-style false positive
+		`format_overrides:`,
 		`format: zip`,
 		`checksums.txt`,
+		// darwin→macos name mapping must be present (goreleaser renders .Os as "darwin"; Homebrew URLs use "macos")
+		`}}macos{{`,
+		// release collision prevention: goreleaser must append assets, not replace the release-please release
+		`mode: append`,
 	}
 	for _, token := range required {
 		if !strings.Contains(content, token) {
