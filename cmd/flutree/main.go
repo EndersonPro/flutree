@@ -13,6 +13,8 @@ import (
 	"github.com/EndersonPro/flutree/internal/domain"
 	infraConfig "github.com/EndersonPro/flutree/internal/infra/config"
 	infraGit "github.com/EndersonPro/flutree/internal/infra/git"
+	infraMCP "github.com/EndersonPro/flutree/internal/infra/mcp"
+	"github.com/EndersonPro/flutree/internal/infra/mcpinstall"
 	"github.com/EndersonPro/flutree/internal/infra/prompt"
 	infraPub "github.com/EndersonPro/flutree/internal/infra/pub"
 	"github.com/EndersonPro/flutree/internal/infra/registry"
@@ -32,64 +34,83 @@ func main() {
 		return
 	}
 
-	cmd := os.Args[1]
-	// Check if --json flag is passed early to use JSON error formatting
+	// Check if --json flag is passed early to use JSON error formatting.
+	// It may appear as the very first argument (e.g. "flutree --json mcp serve")
+	// or anywhere in the argument list.
 	jsonOutput := containsFlag(os.Args, "--json")
+
+	// Determine the command token. When --json appears as os.Args[1], the real
+	// command is os.Args[2]; otherwise os.Args[1] is the command as usual.
+	args := os.Args[1:]
+	if len(args) > 0 && args[0] == "--json" {
+		args = args[1:] // strip the leading --json; command is now args[0]
+	}
+	if len(args) == 0 {
+		printHelp()
+		return
+	}
+	cmd := args[0]
 
 	switch cmd {
 	case "create":
 		if jsonOutput {
-			runtime.ExitOnErrorJSON(runCreate(os.Args[2:]), true)
+			runtime.ExitOnErrorJSON(runCreate(args[1:]), true)
 		} else {
-			runtime.ExitOnError(runCreate(os.Args[2:]))
+			runtime.ExitOnError(runCreate(args[1:]))
 		}
 	case "add-repo":
 		if jsonOutput {
-			runtime.ExitOnErrorJSON(runAddRepo(os.Args[2:]), true)
+			runtime.ExitOnErrorJSON(runAddRepo(args[1:]), true)
 		} else {
-			runtime.ExitOnError(runAddRepo(os.Args[2:]))
+			runtime.ExitOnError(runAddRepo(args[1:]))
 		}
 	case "list":
 		if jsonOutput {
-			runtime.ExitOnErrorJSON(runList(os.Args[2:]), true)
+			runtime.ExitOnErrorJSON(runList(args[1:]), true)
 		} else {
-			runtime.ExitOnError(runList(os.Args[2:]))
+			runtime.ExitOnError(runList(args[1:]))
 		}
 	case "complete":
 		if jsonOutput {
-			runtime.ExitOnErrorJSON(runComplete(os.Args[2:]), true)
+			runtime.ExitOnErrorJSON(runComplete(args[1:]), true)
 		} else {
-			runtime.ExitOnError(runComplete(os.Args[2:]))
+			runtime.ExitOnError(runComplete(args[1:]))
 		}
 	case "pubget":
 		if jsonOutput {
-			runtime.ExitOnErrorJSON(runPubGet(os.Args[2:]), true)
+			runtime.ExitOnErrorJSON(runPubGet(args[1:]), true)
 		} else {
-			runtime.ExitOnError(runPubGet(os.Args[2:]))
+			runtime.ExitOnError(runPubGet(args[1:]))
 		}
 	case "clean":
 		if jsonOutput {
-			runtime.ExitOnErrorJSON(runClean(os.Args[2:]), true)
+			runtime.ExitOnErrorJSON(runClean(args[1:]), true)
 		} else {
-			runtime.ExitOnError(runClean(os.Args[2:]))
+			runtime.ExitOnError(runClean(args[1:]))
 		}
 	case "update":
 		if jsonOutput {
-			runtime.ExitOnErrorJSON(runUpdate(os.Args[2:]), true)
+			runtime.ExitOnErrorJSON(runUpdate(args[1:]), true)
 		} else {
-			runtime.ExitOnError(runUpdate(os.Args[2:]))
+			runtime.ExitOnError(runUpdate(args[1:]))
 		}
 	case "config":
 		if jsonOutput {
-			runtime.ExitOnErrorJSON(runConfig(os.Args[2:]), true)
+			runtime.ExitOnErrorJSON(runConfig(args[1:]), true)
 		} else {
-			runtime.ExitOnError(runConfig(os.Args[2:]))
+			runtime.ExitOnError(runConfig(args[1:]))
 		}
 	case "version", "--version":
 		if jsonOutput {
-			runtime.ExitOnErrorJSON(runVersion(os.Args[2:]), true)
+			runtime.ExitOnErrorJSON(runVersion(args[1:]), true)
 		} else {
-			runtime.ExitOnError(runVersion(os.Args[2:]))
+			runtime.ExitOnError(runVersion(args[1:]))
+		}
+	case "mcp":
+		if jsonOutput {
+			runtime.ExitOnErrorJSON(runMCP(args[1:]), true)
+		} else {
+			runtime.ExitOnError(runMCP(args[1:]))
 		}
 	case "--help", "-h", "help":
 		printHelp()
@@ -720,6 +741,187 @@ func runUpdate(args []string) error {
 		fmt.Println(result.UpgradeNotes)
 	}
 	return nil
+}
+
+// runMCP dispatches the "mcp" top-level command to "serve" or "install".
+func runMCP(args []string) error {
+	if len(args) == 0 || isHelpToken(args[0]) {
+		printMCPHelp()
+		return nil
+	}
+	sub := args[0]
+	switch sub {
+	case "serve":
+		return runMCPServe(args[1:])
+	case "install":
+		return runMCPInstall(args[1:])
+	default:
+		return domain.NewError(domain.CategoryInput, 2,
+			"No such mcp subcommand '"+sub+"'.",
+			"Use 'flutree mcp serve' or 'flutree mcp install'.", nil)
+	}
+}
+
+// runMCPServe starts the MCP stdio server. It blocks until stdin is closed.
+//
+// --json is explicitly rejected regardless of where it appears on the command
+// line (e.g. "flutree mcp serve --json" or "flutree --json mcp serve").
+// mcp serve's stdout is the JSON-RPC transport; mixing in JSON-formatted error
+// envelopes would corrupt the framing that clients rely on.
+func runMCPServe(args []string) error {
+	if containsFlag(os.Args, "--json") {
+		return domain.NewError(domain.CategoryInput, 2,
+			"--json is not supported for 'mcp serve'.",
+			"The stdout of 'mcp serve' is the JSON-RPC transport; --json output would corrupt it.",
+			nil,
+		)
+	}
+	fs := newFlagSet("mcp serve", printMCPHelp)
+	if len(args) > 0 && isHelpToken(args[0]) {
+		printMCPHelp()
+		return nil
+	}
+	if _, err := parseFlagSet(fs, args, "Invalid mcp serve arguments.", "Usage: flutree mcp serve"); err != nil {
+		return err
+	}
+
+	v := strings.TrimSpace(version)
+	if v == "" {
+		v = "dev"
+	} else {
+		v = strings.TrimPrefix(strings.TrimPrefix(v, "v"), "V")
+	}
+
+	configRepo := infraConfig.NewDefault()
+	services := infraMCP.MCPServices{
+		List:     app.NewListService(&infraGit.Gateway{}, registry.NewDefault()),
+		Create:   app.NewCreateService(&infraGit.Gateway{}, registry.NewDefault(), prompt.New()),
+		AddRepo:  app.NewAddRepoService(&infraGit.Gateway{}, registry.NewDefault(), prompt.New()),
+		Complete: app.NewCompleteService(&infraGit.Gateway{}, registry.NewDefault(), prompt.New()),
+		PubGet:   app.NewPubGetService(registry.NewDefault(), &infraPub.Gateway{}),
+		Clean:    app.NewCleanService(&infraGit.Gateway{}, registry.NewDefault(), &infraPub.Gateway{}),
+		Config:   app.NewConfigService(configRepo),
+	}
+
+	srv, err := infraMCP.BuildServer(v, services)
+	if err != nil {
+		return domain.NewError(domain.CategoryUnexpected, 1, "Failed to build MCP server.", err.Error(), err)
+	}
+	return infraMCP.ServeStdio(srv)
+}
+
+// runMCPInstall installs the flutree MCP server entry into each detected AI
+// coding client's config file.
+func runMCPInstall(args []string) error {
+	fs := newFlagSet("mcp install", printMCPInstallHelp)
+	clientFlag := fs.String("client", "", "Comma-separated list of clients to target (claude-code, opencode, codex).")
+	force := fs.Bool("force", false, "Overwrite existing entries.")
+	jsonFlag := fs.Bool("json", false, "Output results as JSON.")
+	if len(args) > 0 && isHelpToken(args[0]) {
+		printMCPInstallHelp()
+		return nil
+	}
+	helpRequested, err := parseFlagSet(fs, args, "Invalid mcp install arguments.", "Usage: flutree mcp install [--client <names>] [--force] [--json]")
+	if err != nil {
+		return err
+	}
+	if helpRequested {
+		return nil
+	}
+
+	var clients []string
+	if *clientFlag != "" {
+		for _, c := range strings.Split(*clientFlag, ",") {
+			if t := strings.TrimSpace(c); t != "" {
+				clients = append(clients, t)
+			}
+		}
+	}
+
+	// Validate the client filter at the CLI layer before any I/O so the error
+	// category is correct: unknown-client is a user input error (CategoryInput,
+	// exit 2); binary-resolution and other runtime failures are unexpected
+	// (CategoryUnexpected, exit 1).
+	installer := mcpinstall.DefaultInstaller()
+	if err := installer.ValidateClients(clients); err != nil {
+		return domain.NewError(domain.CategoryInput, 2, err.Error(), "", err)
+	}
+	results, err := installer.Run(clients, *force)
+	if err != nil {
+		return domain.NewError(domain.CategoryUnexpected, 1, err.Error(), "", err)
+	}
+
+	if *jsonFlag {
+		// Emit a JSON object keyed by client name.
+		out := make(map[string]mcpinstall.InstallResult, len(results))
+		for _, r := range results {
+			out[r.Client] = r
+		}
+		printJSON(out, os.Stdout)
+		return nil
+	}
+
+	// Human-readable output: one line per client.
+	hasError := false
+	for _, r := range results {
+		switch r.Status {
+		case mcpinstall.OutcomeConfigured:
+			fmt.Printf("[OK]   %s: configured", r.Client)
+			if r.ConfigPath != "" {
+				fmt.Printf(" (%s)", r.ConfigPath)
+			}
+			fmt.Println()
+		case mcpinstall.OutcomeAlreadyExists:
+			fmt.Printf("[SKIP] %s: already_exists", r.Client)
+			if r.ConfigPath != "" {
+				fmt.Printf(" (%s)", r.ConfigPath)
+			}
+			fmt.Println()
+		case mcpinstall.OutcomeNotInstalled:
+			fmt.Printf("[-]    %s: not_installed\n", r.Client)
+		case mcpinstall.OutcomeError:
+			fmt.Fprintf(os.Stderr, "[ERR]  %s: %s\n", r.Client, r.Message)
+			hasError = true
+		}
+	}
+
+	if hasError {
+		return domain.NewError(domain.CategoryUnexpected, 1, "One or more clients failed to install.", "", nil)
+	}
+	return nil
+}
+
+func printMCPHelp() {
+	accent := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#0F4C81", Dark: "#8BC6FF"})
+	muted := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
+	cmdStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#0F4C81", Dark: "#8BC6FF"})
+
+	fmt.Println(accent.Render("flutree mcp"))
+	fmt.Println(muted.Render("MCP (Model Context Protocol) integration commands."))
+	fmt.Println("")
+	fmt.Println(accent.Render("Subcommands:"))
+	fmt.Println("  " + cmdStyle.Render("serve") + "    " + muted.Render("Start the MCP stdio server (for AI coding clients)"))
+	fmt.Println("  " + cmdStyle.Render("install") + "  " + muted.Render("Install the flutree MCP server entry into detected AI coding clients"))
+	fmt.Println("")
+	fmt.Println(muted.Render("Tip: Use `flutree mcp <subcommand> --help` for subcommand details."))
+}
+
+func printMCPInstallHelp() {
+	accent := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#0F4C81", Dark: "#8BC6FF"})
+	muted := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
+	flagStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#0F4C81", Dark: "#8BC6FF"})
+
+	fmt.Println(accent.Render("flutree mcp install"))
+	fmt.Println(muted.Render("Install the flutree MCP server entry into each detected AI coding client."))
+	fmt.Println("")
+	fmt.Println(accent.Render("Usage:"))
+	fmt.Println("  flutree mcp install [options]")
+	fmt.Println("")
+	fmt.Println(accent.Render("Options:"))
+	fmt.Println("  " + flagStyle.Render("--client") + " <names>   " + muted.Render("Comma-separated list of clients to target (claude-code, opencode, codex)"))
+	fmt.Println("  " + flagStyle.Render("--force") + "            " + muted.Render("Overwrite existing entries"))
+	fmt.Println("  " + flagStyle.Render("--json") + "             " + muted.Render("Output results as JSON"))
+	fmt.Println("  " + flagStyle.Render("-h, --help") + "         " + muted.Render("Show this help"))
 }
 
 func printHelp() {
