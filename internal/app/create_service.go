@@ -414,7 +414,7 @@ func buildOverrideContent(root domain.PlannedWorktree, packages []domain.Planned
 
 // OverrideEntry represents a single dependency_override entry.
 type OverrideEntry struct {
-	PackageName string
+	PackageName  string
 	RelativePath string
 }
 
@@ -440,6 +440,7 @@ func buildOverrideEntriesMap(root domain.PlannedWorktree, packages []domain.Plan
 // Merge existing overrides from pubspec.yaml into the overrides map.
 // Returns the updated entries map with pubspec overrides included.
 // Pubspec overrides are only moved if not already present in entries (new wins on conflict).
+// Only path-based overrides are migrated; git/version-based overrides are skipped.
 func mergePubspecOverrides(entries map[string]string, pubspecPath string) map[string]string {
 	content, err := os.ReadFile(pubspecPath)
 	if err != nil {
@@ -448,6 +449,8 @@ func mergePubspecOverrides(entries map[string]string, pubspecPath string) map[st
 	parsing := false
 	var currentPkg string
 	for _, rawLine := range strings.Split(string(content), "\n") {
+		// Strip Windows-style line endings before any processing.
+		rawLine = strings.TrimRight(rawLine, "\r")
 		line := strings.TrimSpace(rawLine)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -457,23 +460,34 @@ func mergePubspecOverrides(entries map[string]string, pubspecPath string) map[st
 			currentPkg = ""
 			continue
 		}
-		if parsing && strings.HasPrefix(line, ":") && !strings.HasPrefix(line, "  ") {
+		if !parsing {
+			continue
+		}
+		// Determine indentation from the raw line (before trimming).
+		indent := len(rawLine) - len(strings.TrimLeft(rawLine, " \t"))
+		// A non-empty, non-comment, zero-indented line after the section begins
+		// means we've reached the next top-level key — stop parsing.
+		if indent == 0 {
 			break
 		}
-		if parsing && strings.HasPrefix(line, "  ") && strings.TrimSpace(line) != "" {
-			pkgLine := strings.TrimSpace(line)
-			if strings.HasSuffix(pkgLine, ":") {
-				currentPkg = strings.TrimSpace(strings.TrimSuffix(pkgLine, ":"))
-				continue
-			}
-			if strings.HasPrefix(pkgLine, "path:") && currentPkg != "" {
-				relPath := strings.TrimSpace(strings.TrimPrefix(pkgLine, "path:"))
+		// Package names appear at indent 2 (one level of 2-space indentation).
+		// Their sub-keys (path:, git:, …) appear at indent 4 or deeper.
+		if indent == 2 && strings.HasSuffix(line, ":") {
+			currentPkg = strings.TrimSuffix(line, ":")
+			continue
+		}
+		if indent >= 4 && currentPkg != "" {
+			if strings.HasPrefix(line, "path:") {
+				relPath := strings.TrimSpace(strings.TrimPrefix(line, "path:"))
 				relPath = strings.Trim(relPath, "\"'")
 				if relPath != "" {
 					if _, exists := entries[currentPkg]; !exists {
 						entries[currentPkg] = relPath
 					}
 				}
+				currentPkg = ""
+			} else if indent == 4 {
+				// A different sub-key at depth 4 (e.g. git:) — not a path override; skip pkg.
 				currentPkg = ""
 			}
 		}
@@ -483,6 +497,8 @@ func mergePubspecOverrides(entries map[string]string, pubspecPath string) map[st
 
 // readExistingOverrides reads the current pubspec_overrides.yaml and returns
 // a map of package name -> relative path. Returns nil if file doesn't exist.
+// The file format is produced by formatOverrideYAML: package names at 2-space
+// indent, path values at 4-space indent.
 func readExistingOverrides(overridePath string) map[string]string {
 	content, err := os.ReadFile(overridePath)
 	if err != nil {
@@ -491,26 +507,30 @@ func readExistingOverrides(overridePath string) map[string]string {
 	entries := make(map[string]string)
 	var currentPkg string
 	for _, rawLine := range strings.Split(string(content), "\n") {
+		// Strip Windows-style line endings before any processing.
+		rawLine = strings.TrimRight(rawLine, "\r")
 		line := strings.TrimSpace(rawLine)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if line == "dependency_overrides:" || strings.TrimSpace(line) == "{}" {
+		if line == "dependency_overrides:" || line == "{}" {
 			continue
 		}
-		if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "    ") {
-			if strings.HasSuffix(line, ":") {
-				currentPkg = strings.TrimSpace(strings.TrimSuffix(line, ":"))
-				continue
+		// Determine indentation from the raw line (before trimming).
+		indent := len(rawLine) - len(strings.TrimLeft(rawLine, " \t"))
+		// Package names at indent 2 (format: "  pkg_name:").
+		if indent == 2 && strings.HasSuffix(line, ":") {
+			currentPkg = strings.TrimSuffix(line, ":")
+			continue
+		}
+		// Path values at indent 4 (format: "    path: ../value").
+		if indent == 4 && currentPkg != "" && strings.HasPrefix(line, "path:") {
+			pathVal := strings.TrimSpace(strings.TrimPrefix(line, "path:"))
+			pathVal = strings.Trim(pathVal, "\"'")
+			if pathVal != "" {
+				entries[currentPkg] = pathVal
 			}
-			if strings.HasPrefix(line, "path:") && currentPkg != "" {
-				pathVal := strings.TrimSpace(strings.TrimPrefix(line, "path:"))
-				pathVal = strings.Trim(pathVal, "\"'")
-				if pathVal != "" {
-					entries[currentPkg] = pathVal
-				}
-				currentPkg = ""
-			}
+			currentPkg = ""
 		}
 	}
 	return entries
