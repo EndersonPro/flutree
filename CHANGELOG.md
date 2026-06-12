@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.0](https://github.com/EndersonPro/flutree/compare/v0.17.0...v1.0.0) (2026-06-12)
+
+
+### Features
+
+* **cli:** add mcp command dispatch for serve and install subcommands ([fd8e02e](https://github.com/EndersonPro/flutree/commit/fd8e02e482c1758fcd3013eceaa3ff495e7c55ea))
+* **mcp:** add MCP server adapter with 9 tool handlers and error mapping ([89d8fb4](https://github.com/EndersonPro/flutree/commit/89d8fb49c2da1273e71451ec916730c4d9bee8a8))
+* **mcpinstall:** add Claude Code config merger with non-destructive JSON merge ([fbdad8f](https://github.com/EndersonPro/flutree/commit/fbdad8fa2d5ce7e7ff916f96671ce23562eb13d9))
+* **mcpinstall:** add Codex TOML config merger for mcp_servers.flutree table ([f528ea0](https://github.com/EndersonPro/flutree/commit/f528ea008b3a51e6073dd705c8cbd473c73650e5))
+* **mcpinstall:** add Installer orchestrator with client filter and exec injection ([ad0bc74](https://github.com/EndersonPro/flutree/commit/ad0bc74d3c0a18a07829ccae43d4d9e114860547))
+* **mcpinstall:** add OpenCode config merger with JSONC comment detection ([3814a8c](https://github.com/EndersonPro/flutree/commit/3814a8c6a94a0ca83f0868ead4ffcd6d37d84af4))
+* **mcpinstall:** add shared types, atomic write helpers, and exec resolver ([5ca225a](https://github.com/EndersonPro/flutree/commit/5ca225ad80f8935fcc7ef9200bbd0ee7d68bef71))
+* release flutree 1.0.0 with MCP server support ([76d67a8](https://github.com/EndersonPro/flutree/commit/76d67a8b908a0e3ece3c59f79ce541d069368171))
+
+
+### Bug Fixes
+
+* **cli:** enforce --json rejection in mcp serve and fix error categories ([baba985](https://github.com/EndersonPro/flutree/commit/baba9859ec33f6538897e943ff73f63a06dff21d))
+* **mcpinstall:** preserve config permissions, gate comment loss, surface detect errors ([d39c706](https://github.com/EndersonPro/flutree/commit/d39c706e61bcc11daf9c52d7966d04ffe5c255e8))
+* **mcp:** validate required tool args and wire ignored schema fields ([66e9d45](https://github.com/EndersonPro/flutree/commit/66e9d45386bd9d54523945f5d65d1501167d3fe9))
+
 ## [0.17.0](https://github.com/EndersonPro/flutree/compare/v0.16.1...v0.17.0) (2026-04-23)
 
 
