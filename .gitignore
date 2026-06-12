@@ -16,5 +16,6 @@ dist/
 bin/
 *.test
 coverage.out
+*.coverprofile
 /flutree
 .atl
