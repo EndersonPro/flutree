@@ -55,3 +55,18 @@ jobs:
 
       - name: Validate VERSION semver contract
         run: ./scripts/check_version_contract.sh
+
+  windows-build:
+    name: windows-build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Cross-compile for Windows
+        run: GOOS=windows GOARCH=amd64 go build ./cmd/flutree
+      - name: Vet for Windows
+        run: GOOS=windows go vet ./...
