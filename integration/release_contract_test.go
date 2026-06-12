@@ -165,3 +165,75 @@ func TestVersionContractJobRunsInPRWorkflow(t *testing.T) {
 		}
 	}
 }
+
+func TestGoreleaserReleaseWorkflowExists(t *testing.T) {
+	root := projectRoot(t)
+	workflowPath := filepath.Join(root, ".github", "workflows", "release.yml")
+	b, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(b)
+
+	required := []string{
+		`push:`,
+		`tags:`,
+		`- "v*"`,
+		`goreleaser/goreleaser-action`,
+		`release --clean`,
+		`GITHUB_TOKEN`,
+		`HOMEBREW_TAP_TOKEN`,
+	}
+	for _, token := range required {
+		if !strings.Contains(content, token) {
+			t.Fatalf("release workflow missing required token %q", token)
+		}
+	}
+}
+
+func TestGoreleaserYamlTokens(t *testing.T) {
+	root := projectRoot(t)
+	goreleaserPath := filepath.Join(root, ".goreleaser.yaml")
+	b, err := os.ReadFile(goreleaserPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(b)
+
+	required := []string{
+		`CGO_ENABLED=0`,
+		`-X main.version=`,
+		`scoops`,
+		`brews`,
+		`EndersonPro/scoop-flutree`,
+		`EndersonPro/homebrew-flutree`,
+		`format: zip`,
+		`checksums.txt`,
+	}
+	for _, token := range required {
+		if !strings.Contains(content, token) {
+			t.Fatalf(".goreleaser.yaml missing required token %q", token)
+		}
+	}
+}
+
+func TestWindowsBuildJobExists(t *testing.T) {
+	root := projectRoot(t)
+	workflowPath := filepath.Join(root, ".github", "workflows", "tests.yml")
+	b, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(b)
+
+	required := []string{
+		`windows-build`,
+		`GOOS=windows GOARCH=amd64 go build`,
+		`go vet`,
+	}
+	for _, token := range required {
+		if !strings.Contains(content, token) {
+			t.Fatalf("tests workflow missing windows-build token %q", token)
+		}
+	}
+}
