@@ -523,7 +523,10 @@ func (m *createWizardModel) refreshPackageCandidates(preselected []string) {
 }
 
 func (m createWizardModel) progressLabel() string {
-	type stepInfo struct{ num int; label string }
+	type stepInfo struct {
+		num   int
+		label string
+	}
 	steps := []stepInfo{
 		{1, "Name"},
 		{2, "Root"},
@@ -540,7 +543,7 @@ func (m createWizardModel) progressLabel() string {
 			prefix = "●"
 			style = wizardProgressActiveStyle
 		}
-		out.WriteString(style.Render(prefix+" Step "+strconv.Itoa(s.num)+": "+s.label))
+		out.WriteString(style.Render(prefix + " Step " + strconv.Itoa(s.num) + ": " + s.label))
 		if s.num < len(steps) {
 			out.WriteString("  ")
 		}
