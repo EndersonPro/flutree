@@ -22,7 +22,10 @@ type Merger interface {
 	// Name returns the client identifier string, e.g. "claude-code".
 	Name() string
 	// Detect returns true when the client appears to be installed on this host.
-	Detect() bool
+	// A non-nil error indicates an I/O problem (e.g. permission denied on home
+	// directory); the caller should treat it as an installation failure rather
+	// than "not installed".
+	Detect() (bool, error)
 	// Merge writes the flutree server entry to the client's config file.
 	// absCmd is the absolute path to the flutree binary (never a bare name).
 	// force controls whether an existing entry is overwritten.

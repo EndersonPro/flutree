@@ -2,6 +2,8 @@ package mcpinstall_test
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/EndersonPro/flutree/internal/infra/mcpinstall"
@@ -11,6 +13,7 @@ import (
 type fakeMerger struct {
 	name        string
 	detects     bool
+	detectErr   error
 	outcome     mcpinstall.Outcome
 	mergeErr    error
 	mergeForce  bool
@@ -19,7 +22,9 @@ type fakeMerger struct {
 }
 
 func (f *fakeMerger) Name() string { return f.name }
-func (f *fakeMerger) Detect() bool { return f.detects }
+func (f *fakeMerger) Detect() (bool, error) {
+	return f.detects, f.detectErr
+}
 func (f *fakeMerger) Merge(absCmd string, force bool) (mcpinstall.Outcome, error) {
 	f.mergeCalled = true
 	f.mergeCmd = absCmd
@@ -164,10 +169,17 @@ func TestInstaller_Run_MergeError_StatusError(t *testing.T) {
 	}
 }
 
+// TestInstaller_Run_ResultHasConfigPath verifies that a merger implementing
+// MergerWithConfigPath has its path included in the InstallResult.
 func TestInstaller_Run_ResultHasConfigPath(t *testing.T) {
-	fake := &fakeMerger{name: "claude-code", detects: true, outcome: mcpinstall.OutcomeConfigured}
-	// Claude merger provides config path — we verify the orchestrator includes it
-	installer := mcpinstall.NewInstaller([]mcpinstall.Merger{fake}, mcpinstall.ExecResolver("/abs/flutree"))
+	dir := t.TempDir()
+	// Pre-create .claude.json so Detect() returns true.
+	if err := os.WriteFile(filepath.Join(dir, ".claude.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Use a real claude merger so ConfigPath() is populated.
+	m := mcpinstall.NewClaudeMerger(dir)
+	installer := mcpinstall.NewInstaller([]mcpinstall.Merger{m}, mcpinstall.ExecResolver("/abs/flutree"))
 	results, err := installer.Run([]string{}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -175,8 +187,38 @@ func TestInstaller_Run_ResultHasConfigPath(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("want 1 result got %d", len(results))
 	}
-	// ConfigPath may be empty for fake mergers; just assert it doesn't panic
-	_ = results[0].ConfigPath
+	want := filepath.Join(dir, ".claude.json")
+	if results[0].ConfigPath != want {
+		t.Errorf("want ConfigPath=%q got %q", want, results[0].ConfigPath)
+	}
+}
+
+// TestInstaller_Run_DetectError_StatusError verifies that a Detect() I/O
+// error is surfaced as OutcomeError, not silently treated as not_installed.
+func TestInstaller_Run_DetectError_StatusError(t *testing.T) {
+	ioErr := errors.New("permission denied")
+	fake := &fakeMerger{
+		name:      "claude-code",
+		detects:   false,
+		detectErr: ioErr,
+	}
+	installer := mcpinstall.NewInstaller([]mcpinstall.Merger{fake}, mcpinstall.ExecResolver("/abs/flutree"))
+	results, err := installer.Run([]string{}, false)
+	if err != nil {
+		t.Fatalf("orchestrator error should not propagate: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("want 1 result got %d", len(results))
+	}
+	if results[0].Status != mcpinstall.OutcomeError {
+		t.Errorf("want OutcomeError got %q", results[0].Status)
+	}
+	if results[0].Message == "" {
+		t.Error("message should not be empty when detect returns an error")
+	}
+	if fake.mergeCalled {
+		t.Error("Merge() should not be called when Detect() returns an error")
+	}
 }
 
 // --- helpers ---
@@ -187,4 +229,12 @@ func toMergers(fakes []*fakeMerger) []mcpinstall.Merger {
 		out[i] = f
 	}
 	return out
+}
+
+// writePerm writes data to path with the given file mode (for permission tests).
+func writePerm(t *testing.T, path string, data []byte, perm os.FileMode) {
+	t.Helper()
+	if err := os.WriteFile(path, data, perm); err != nil {
+		t.Fatal(err)
+	}
 }

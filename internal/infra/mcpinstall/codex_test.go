@@ -23,7 +23,11 @@ func TestCodexMerger_Detect_DirExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := mcpinstall.NewCodexMerger(dir)
-	if !m.Detect() {
+	got, err := m.Detect()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
 		t.Fatal("expected Detect() == true when .codex/ exists")
 	}
 }
@@ -31,7 +35,11 @@ func TestCodexMerger_Detect_DirExists(t *testing.T) {
 func TestCodexMerger_Detect_NeitherPresent(t *testing.T) {
 	dir := t.TempDir()
 	m := mcpinstall.NewCodexMerger(dir)
-	if m.Detect() {
+	got, err := m.Detect()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got {
 		t.Fatal("expected Detect() == false when .codex/ absent")
 	}
 }
@@ -192,6 +200,94 @@ func TestCodexMerger_Merge_MalformedTOML_Error(t *testing.T) {
 	}
 	if outcome != mcpinstall.OutcomeError {
 		t.Fatalf("want %q got %q", mcpinstall.OutcomeError, outcome)
+	}
+}
+
+// TestCodexMerger_Merge_TOMLComments_NoForce_Error verifies that a TOML file
+// containing comments triggers an error without --force, consistent with the
+// opencode JSONC comment policy.
+func TestCodexMerger_Merge_TOMLComments_NoForce_Error(t *testing.T) {
+	dir := t.TempDir()
+	codexDir := filepath.Join(dir, ".codex")
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tomlWithComments := "# my codex config\nmodel = \"gpt-4o\"\n"
+	path := filepath.Join(codexDir, "config.toml")
+	if err := os.WriteFile(path, []byte(tomlWithComments), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := tomlWithComments
+
+	m := mcpinstall.NewCodexMerger(dir)
+	outcome, err := m.Merge("/usr/local/bin/flutree", false)
+	if err == nil {
+		t.Fatal("expected error for TOML comments without --force, got nil")
+	}
+	if outcome != mcpinstall.OutcomeError {
+		t.Fatalf("want %q got %q", mcpinstall.OutcomeError, outcome)
+	}
+
+	after := readFile(t, path)
+	if after != before {
+		t.Error("file was modified but should not have been")
+	}
+}
+
+// TestCodexMerger_Merge_TOMLComments_Force_StripsAndWrites verifies that with
+// --force, a TOML file with comments is parsed (comments stripped by round-trip)
+// and the entry is written successfully.
+func TestCodexMerger_Merge_TOMLComments_Force_StripsAndWrites(t *testing.T) {
+	dir := t.TempDir()
+	codexDir := filepath.Join(dir, ".codex")
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tomlWithComments := "# my codex config\nmodel = \"gpt-4o\"\n"
+	if err := os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte(tomlWithComments), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := mcpinstall.NewCodexMerger(dir)
+	outcome, err := m.Merge("/usr/local/bin/flutree", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if outcome != mcpinstall.OutcomeConfigured {
+		t.Fatalf("want %q got %q", mcpinstall.OutcomeConfigured, outcome)
+	}
+
+	data := readTOML(t, filepath.Join(codexDir, "config.toml"))
+	if data["model"] != "gpt-4o" {
+		t.Error("model key was lost after TOML comment strip")
+	}
+	mcpServers := data["mcp_servers"].(map[string]any)
+	if _, ok := mcpServers["flutree"]; !ok {
+		t.Error("flutree entry was not created after TOML comment strip")
+	}
+}
+
+// TestCodexMerger_Merge_EmptyFile_FreshStart verifies that a 0-byte existing
+// config.toml is treated as a fresh start, consistent with the claude and
+// opencode empty-file policy.
+func TestCodexMerger_Merge_EmptyFile_FreshStart(t *testing.T) {
+	dir := t.TempDir()
+	codexDir := filepath.Join(dir, ".codex")
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(codexDir, "config.toml")
+	if err := os.WriteFile(path, []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := mcpinstall.NewCodexMerger(dir)
+	outcome, err := m.Merge("/usr/local/bin/flutree", false)
+	if err != nil {
+		t.Fatalf("unexpected error on empty file: %v", err)
+	}
+	if outcome != mcpinstall.OutcomeConfigured {
+		t.Fatalf("want %q got %q", mcpinstall.OutcomeConfigured, outcome)
 	}
 }
 

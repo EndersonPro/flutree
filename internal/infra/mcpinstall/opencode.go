@@ -2,7 +2,9 @@ package mcpinstall
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,32 +33,42 @@ func NewOpenCodeMerger(baseDir string) Merger {
 func (o *opencodeMerger) Name() string { return "opencode" }
 
 // Detect returns true when `opencode` binary is on PATH OR ~/.config/opencode/ exists.
-func (o *opencodeMerger) Detect() bool {
+// It returns a non-nil error only on genuine I/O failure (e.g. permission denied
+// resolving the home directory).
+func (o *opencodeMerger) Detect() (bool, error) {
 	if _, err := o.lookPath("opencode"); err == nil {
-		return true
+		return true, nil
 	}
-	base := o.resolveBase()
+	base, err := o.resolveBase()
+	if err != nil {
+		return false, fmt.Errorf("opencode: resolve home dir: %w", err)
+	}
 	if _, err := os.Stat(filepath.Join(base, ".config", "opencode")); err == nil {
-		return true
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
 // Merge writes the flutree entry to ~/.config/opencode/opencode.json non-destructively.
 // JSONC handling: if the file contains comments and force is false, returns OutcomeError.
 // If force is true, comments are stripped before merging (comments are not preserved).
+// An empty (0-byte) file is treated as a fresh start.
 func (o *opencodeMerger) Merge(absCmd string, force bool) (Outcome, error) {
-	configDir := filepath.Join(o.resolveBase(), ".config", "opencode")
+	base, err := o.resolveBase()
+	if err != nil {
+		return OutcomeError, fmt.Errorf("opencode: resolve home dir: %w", err)
+	}
+	configDir := filepath.Join(base, ".config", "opencode")
 	path := filepath.Join(configDir, "opencode.json")
 
 	raw, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return OutcomeError, fmt.Errorf("opencode: read config: %w", err)
 	}
 
 	var root map[string]json.RawMessage
 
-	if os.IsNotExist(err) || len(raw) == 0 {
+	if errors.Is(err, fs.ErrNotExist) || len(raw) == 0 {
 		// File missing or empty: start fresh.
 		root = map[string]json.RawMessage{}
 	} else {
@@ -112,15 +124,29 @@ func (o *opencodeMerger) Merge(absCmd string, force bool) (Outcome, error) {
 	return OutcomeConfigured, nil
 }
 
-func (o *opencodeMerger) resolveBase() string {
+// resolveBase returns the home directory for this merger.
+// It returns an error when os.UserHomeDir fails, rather than silently falling
+// back to "." (which would write config files into the process working directory).
+func (o *opencodeMerger) resolveBase() (string, error) {
 	if o.baseDir != "" {
-		return o.baseDir
+		return o.baseDir, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "."
+		return "", fmt.Errorf("could not determine home directory: %w", err)
 	}
-	return home
+	return home, nil
+}
+
+// ConfigPath returns the absolute path of the config file this merger manages.
+// It satisfies MergerWithConfigPath; empty string is returned if the home
+// directory cannot be resolved.
+func (o *opencodeMerger) ConfigPath() string {
+	base, err := o.resolveBase()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(base, ".config", "opencode", "opencode.json")
 }
 
 // openCodeEntry is the JSON shape expected by OpenCode for a local MCP server.

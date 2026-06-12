@@ -23,7 +23,11 @@ func TestClaudeMerger_Detect_ConfigExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := mcpinstall.NewClaudeMerger(dir)
-	if !m.Detect() {
+	got, err := m.Detect()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
 		t.Fatal("expected Detect() == true when .claude.json exists")
 	}
 }
@@ -35,7 +39,11 @@ func TestClaudeMerger_Detect_DirExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := mcpinstall.NewClaudeMerger(dir)
-	if !m.Detect() {
+	got, err := m.Detect()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
 		t.Fatal("expected Detect() == true when .claude/ dir exists")
 	}
 }
@@ -43,7 +51,11 @@ func TestClaudeMerger_Detect_DirExists(t *testing.T) {
 func TestClaudeMerger_Detect_NeitherPresent(t *testing.T) {
 	dir := t.TempDir()
 	m := mcpinstall.NewClaudeMerger(dir)
-	if m.Detect() {
+	got, err := m.Detect()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got {
 		t.Fatal("expected Detect() == false when neither .claude.json nor .claude/ exists")
 	}
 }
@@ -181,6 +193,57 @@ func TestClaudeMerger_Merge_MalformedJSON_Error(t *testing.T) {
 	}
 	if outcome != mcpinstall.OutcomeError {
 		t.Fatalf("want %q got %q", mcpinstall.OutcomeError, outcome)
+	}
+}
+
+// TestClaudeMerger_Merge_EmptyFile_FreshStart verifies that a 0-byte existing
+// file is treated as a fresh start (no data to lose), consistent with the
+// opencode and codex empty-file policy.
+func TestClaudeMerger_Merge_EmptyFile_FreshStart(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".claude.json")
+	if err := os.WriteFile(path, []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := mcpinstall.NewClaudeMerger(dir)
+	outcome, err := m.Merge("/usr/local/bin/flutree", false)
+	if err != nil {
+		t.Fatalf("unexpected error on empty file: %v", err)
+	}
+	if outcome != mcpinstall.OutcomeConfigured {
+		t.Fatalf("want %q got %q", mcpinstall.OutcomeConfigured, outcome)
+	}
+}
+
+// TestClaudeMerger_Merge_PreservesPermissions verifies that when an existing
+// config file has restrictive permissions (e.g. 0o600), those permissions are
+// preserved after the merge write — tokens must not be exposed by a perm downgrade.
+func TestClaudeMerger_Merge_PreservesPermissions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".claude.json")
+
+	initial := map[string]any{"mcpServers": map[string]any{}}
+	data, _ := json.Marshal(initial)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := mcpinstall.NewClaudeMerger(dir)
+	outcome, err := m.Merge("/usr/local/bin/flutree", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if outcome != mcpinstall.OutcomeConfigured {
+		t.Fatalf("want %q got %q", mcpinstall.OutcomeConfigured, outcome)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("want file perm 0o600 got %04o", got)
 	}
 }
 

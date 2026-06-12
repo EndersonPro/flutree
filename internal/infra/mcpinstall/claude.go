@@ -35,25 +35,35 @@ func (c *claudeMerger) Name() string { return "claude-code" }
 //   - `claude` binary is on PATH, OR
 //   - ~/.claude.json exists, OR
 //   - ~/.claude/ directory exists.
-func (c *claudeMerger) Detect() bool {
+//
+// It returns a non-nil error only on genuine I/O failure (e.g. permission
+// denied resolving the home directory), not when the client is simply absent.
+func (c *claudeMerger) Detect() (bool, error) {
 	if _, err := c.lookPath("claude"); err == nil {
-		return true
+		return true, nil
 	}
-	base := c.resolveBase()
+	base, err := c.resolveBase()
+	if err != nil {
+		return false, fmt.Errorf("claude-code: resolve home dir: %w", err)
+	}
 	if _, err := os.Stat(filepath.Join(base, ".claude.json")); err == nil {
-		return true
+		return true, nil
 	}
 	if _, err := os.Stat(filepath.Join(base, ".claude")); err == nil {
-		return true
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
 // Merge writes the flutree entry to ~/.claude.json non-destructively.
 // It returns OutcomeConfigured on success, OutcomeAlreadyExists if the
 // entry already exists (and force is false), or OutcomeError on failure.
 func (c *claudeMerger) Merge(absCmd string, force bool) (Outcome, error) {
-	path := filepath.Join(c.resolveBase(), ".claude.json")
+	base, err := c.resolveBase()
+	if err != nil {
+		return OutcomeError, fmt.Errorf("claude-code: resolve home dir: %w", err)
+	}
+	path := filepath.Join(base, ".claude.json")
 
 	// Load or initialize config as a map of raw JSON values so unrelated keys
 	// are preserved byte-for-byte.
@@ -98,15 +108,29 @@ func (c *claudeMerger) Merge(absCmd string, force bool) (Outcome, error) {
 	return OutcomeConfigured, nil
 }
 
-func (c *claudeMerger) resolveBase() string {
+// resolveBase returns the home directory for this merger.
+// It returns an error when os.UserHomeDir fails, rather than silently falling
+// back to "." (which would write config files into the process working directory).
+func (c *claudeMerger) resolveBase() (string, error) {
 	if c.baseDir != "" {
-		return c.baseDir
+		return c.baseDir, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "."
+		return "", fmt.Errorf("could not determine home directory: %w", err)
 	}
-	return home
+	return home, nil
+}
+
+// ConfigPath returns the absolute path of the config file this merger manages.
+// It satisfies MergerWithConfigPath; empty string is returned if the home
+// directory cannot be resolved.
+func (c *claudeMerger) ConfigPath() string {
+	base, err := c.resolveBase()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(base, ".claude.json")
 }
 
 // claudeEntry is the JSON shape expected by Claude Code for a stdio MCP server.

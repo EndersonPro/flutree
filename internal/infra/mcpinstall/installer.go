@@ -57,7 +57,18 @@ func (inst *Installer) Run(clients []string, force bool) ([]InstallResult, error
 			continue
 		}
 
-		if !m.Detect() {
+		detected, detectErr := m.Detect()
+		if detectErr != nil {
+			// I/O error during detection — surface as OutcomeError so the
+			// caller knows something went wrong rather than silently skipping.
+			results = append(results, InstallResult{
+				Client:  m.Name(),
+				Status:  OutcomeError,
+				Message: detectErr.Error(),
+			})
+			continue
+		}
+		if !detected {
 			results = append(results, InstallResult{
 				Client:  m.Name(),
 				Status:  OutcomeNotInstalled,

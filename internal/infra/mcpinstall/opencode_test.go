@@ -21,7 +21,11 @@ func TestOpenCodeMerger_Detect_ConfigDirExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := mcpinstall.NewOpenCodeMerger(dir)
-	if !m.Detect() {
+	got, err := m.Detect()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
 		t.Fatal("expected Detect() == true when .config/opencode/ exists")
 	}
 }
@@ -29,7 +33,11 @@ func TestOpenCodeMerger_Detect_ConfigDirExists(t *testing.T) {
 func TestOpenCodeMerger_Detect_NeitherPresent(t *testing.T) {
 	dir := t.TempDir()
 	m := mcpinstall.NewOpenCodeMerger(dir)
-	if m.Detect() {
+	got, err := m.Detect()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got {
 		t.Fatal("expected Detect() == false when .config/opencode/ absent")
 	}
 }
@@ -242,5 +250,28 @@ func TestOpenCodeMerger_Merge_JSONC_Force_StripsAndWrites(t *testing.T) {
 	mcp := data["mcp"].(map[string]any)
 	if _, ok := mcp["flutree"]; !ok {
 		t.Error("flutree entry was not created after JSONC strip")
+	}
+}
+
+// TestOpenCodeMerger_Merge_EmptyFile_FreshStart verifies that a 0-byte existing
+// file is treated as a fresh start, consistent with the claude and codex policy.
+func TestOpenCodeMerger_Merge_EmptyFile_FreshStart(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, ".config", "opencode")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(configDir, "opencode.json")
+	if err := os.WriteFile(path, []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := mcpinstall.NewOpenCodeMerger(dir)
+	outcome, err := m.Merge("/usr/local/bin/flutree", false)
+	if err != nil {
+		t.Fatalf("unexpected error on empty file: %v", err)
+	}
+	if outcome != mcpinstall.OutcomeConfigured {
+		t.Fatalf("want %q got %q", mcpinstall.OutcomeConfigured, outcome)
 	}
 }
