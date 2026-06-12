@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.2](https://github.com/EndersonPro/flutree/compare/v1.1.1...v1.1.2) (2026-06-12)
+
+
+### Bug Fixes
+
+* **ci:** retire release-brew job, goreleaser is sole release publisher ([6ba0486](https://github.com/EndersonPro/flutree/commit/6ba0486346cae31e7d2195d12e29afd5d4bd4f5d))
+
 ## [1.1.1](https://github.com/EndersonPro/flutree/compare/v1.1.0...v1.1.1) (2026-06-12)
 
 
