@@ -165,3 +165,90 @@ func TestVersionContractJobRunsInPRWorkflow(t *testing.T) {
 		}
 	}
 }
+
+func TestGoreleaserReleaseWorkflowExists(t *testing.T) {
+	root := projectRoot(t)
+	workflowPath := filepath.Join(root, ".github", "workflows", "release.yml")
+	b, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(b)
+
+	required := []string{
+		`push:`,
+		`tags:`,
+		`- "v*"`,
+		`goreleaser/goreleaser-action`,
+		`release --clean`,
+		`GITHUB_TOKEN`,
+		`HOMEBREW_TAP_TOKEN`,
+		// goreleaser version must be pinned to a concrete v2 release, not "latest"
+		`version: "v2.`,
+	}
+	for _, token := range required {
+		if !strings.Contains(content, token) {
+			t.Fatalf("release workflow missing required token %q", token)
+		}
+	}
+}
+
+func TestGoreleaserYamlTokens(t *testing.T) {
+	root := projectRoot(t)
+	goreleaserPath := filepath.Join(root, ".goreleaser.yaml")
+	b, err := os.ReadFile(goreleaserPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(b)
+
+	required := []string{
+		`CGO_ENABLED=0`,
+		`-X main.version=`,
+		`scoops`,
+		`brews`,
+		`EndersonPro/scoop-flutree`,
+		`EndersonPro/homebrew-flutree`,
+		// format_overrides block must exist and use the v2 `formats:` list syntax
+		// (singular `format:` is deprecated in goreleaser v2.6+)
+		`format_overrides:`,
+		`formats: ["zip"]`,
+		`checksums.txt`,
+		// darwin→macos name mapping must be present (goreleaser renders .Os as "darwin"; Homebrew URLs use "macos")
+		`}}macos{{`,
+		// release collision prevention: goreleaser must append assets, not replace the release-please release
+		`mode: append`,
+	}
+	for _, token := range required {
+		if !strings.Contains(content, token) {
+			t.Fatalf(".goreleaser.yaml missing required token %q", token)
+		}
+	}
+
+	// The spec requires linux/arm64 in the build matrix; guard against it
+	// reappearing in the ignore block (slipped through once already).
+	if strings.Contains(content, "goos: linux\n        goarch: arm64") {
+		t.Fatal(".goreleaser.yaml must not ignore the linux/arm64 build target")
+	}
+}
+
+func TestWindowsBuildJobExists(t *testing.T) {
+	root := projectRoot(t)
+	workflowPath := filepath.Join(root, ".github", "workflows", "tests.yml")
+	b, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(b)
+
+	required := []string{
+		`windows-build`,
+		`GOOS=windows GOARCH=amd64 go build`,
+		`go vet`,
+	}
+	for _, token := range required {
+		if !strings.Contains(content, token) {
+			t.Fatalf("tests workflow missing windows-build token %q", token)
+		}
+	}
+}

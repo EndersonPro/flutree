@@ -1,3 +1,5 @@
+//go:build !windows
+
 package integration_test
 
 import (
@@ -27,19 +29,6 @@ func buildCLI(t *testing.T) string {
 		t.Fatalf("build failed: %v\n%s", err, string(out))
 	}
 	return bin
-}
-
-func projectRoot(t *testing.T) string {
-	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("failed to resolve caller")
-	}
-	root := filepath.Clean(filepath.Join(filepath.Dir(file), ".."))
-	if _, err := os.Stat(root); err != nil {
-		t.Fatal(err)
-	}
-	return root
 }
 
 type runResult struct {

@@ -4,14 +4,35 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/EndersonPro/flutree/internal/domain"
 )
 
-type BrewGateway struct{}
+// BrewGateway wraps brew CLI operations. The goos field defaults to
+// runtime.GOOS but can be overridden in tests to exercise non-host OS paths.
+type BrewGateway struct {
+	goos string
+}
+
+// NewBrewGateway returns a BrewGateway wired to the current OS.
+func NewBrewGateway() *BrewGateway {
+	return &BrewGateway{goos: runtime.GOOS}
+}
 
 func (g *BrewGateway) CheckBrewInstalled() error {
+	goos := g.goos
+	// Zero-value BrewGateway (empty goos) treats the empty string as host OS for
+	// backward compatibility; prefer NewBrewGateway() for explicit initialization.
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	if goos == "windows" {
+		return domain.NewError(domain.CategoryPrecondition, 1,
+			"Automatic update via Homebrew is not available on Windows.",
+			"Use 'scoop update flutree' to update.", nil)
+	}
 	if _, err := exec.LookPath("brew"); err != nil {
 		return domain.NewError(domain.CategoryPrecondition, 1, "Homebrew is required for automatic updates.", "Only brew-managed installations are supported for update in this release.", err)
 	}

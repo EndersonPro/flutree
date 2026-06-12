@@ -1,0 +1,83 @@
+version: 2
+
+builds:
+  - main: ./cmd/flutree
+    binary: flutree
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - darwin
+      - windows
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: darwin
+        goarch: amd64
+
+archives:
+  - formats: ["tar.gz"]
+    format_overrides:
+      - goos: windows
+        formats: ["zip"]
+    # darwin→macos mapping: goreleaser renders .Os as "darwin" but the existing
+    # Homebrew formula URLs (from release-please release-brew job) use "macos"
+    # (e.g. flutree-1.0.2-macos-arm64.tar.gz). This template keeps both in sync.
+    name_template: "{{ .ProjectName }}-{{ .Version }}-{{ if eq .Os \"darwin\" }}macos{{ else }}{{ .Os }}{{ end }}-{{ .Arch }}"
+    files:
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+# release-please creates the GitHub release for the tag. goreleaser must only
+# append multi-platform assets — never replace/recreate the release — so that
+# the release-please release notes are preserved intact.
+#
+# Phase-1 coexistence (TASK-010/011): release-please's release-brew job still
+# publishes the macos-arm64 asset and updates the Homebrew formula; goreleaser
+# appends the remaining platform assets. Once the side-by-side run is validated
+# manually (TASK-010), the release-brew job will be retired (TASK-011).
+release:
+  mode: append
+
+# NOTE: `brews` is deprecated in goreleaser v2.10+ in favor of `homebrew_casks`,
+# but migrating to casks would change the tap layout (Casks/ vs Formula/) and
+# break existing `brew install EndersonPro/flutree/flutree` users — exactly the
+# non-regression this change must avoid. We keep `brews` deliberately and pin
+# goreleaser to v2.16.0 in release.yml so behavior stays stable.
+brews:
+  # tap: EndersonPro/homebrew-flutree
+  - repository:
+      owner: EndersonPro
+      name: homebrew-flutree
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    commit_author:
+      name: github-actions[bot]
+      email: 41898282+github-actions[bot]@users.noreply.github.com
+    directory: Formula
+    homepage: https://github.com/EndersonPro/flutree
+    description: Manage Git worktrees for multi-package Flutter workflows.
+    license: MIT
+    install: bin.install "flutree"
+    test: system "#{bin}/flutree --version"
+
+scoops:
+  # bucket: EndersonPro/scoop-flutree
+  # HOMEBREW_TAP_TOKEN is reused here intentionally (single PAT). The PAT MUST
+  # have write access to BOTH EndersonPro/homebrew-flutree AND
+  # EndersonPro/scoop-flutree to allow both publishers to push.
+  - repository:
+      owner: EndersonPro
+      name: scoop-flutree
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    commit_author:
+      name: github-actions[bot]
+      email: 41898282+github-actions[bot]@users.noreply.github.com
+    homepage: https://github.com/EndersonPro/flutree
+    description: Manage Git worktrees for multi-package Flutter workflows.
+    license: MIT

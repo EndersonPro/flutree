@@ -60,6 +60,19 @@ brew upgrade flutree
 flutree update
 ```
 
+### Windows (Scoop)
+
+```bash
+scoop bucket add flutree https://github.com/EndersonPro/scoop-flutree
+scoop install flutree
+```
+
+Upgrade:
+
+```bash
+scoop update flutree
+```
+
 ### Build from source
 
 ```bash
