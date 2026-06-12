@@ -998,6 +998,153 @@ func TestApplySkipsRemoteCheckWhenSyncWithRemoteIsDisabled(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Tests for mergePubspecOverrides and readExistingOverrides (Bug 2)
+// ---------------------------------------------------------------------------
+
+func TestMergePubspecOverridesParsesRealisticPubspec(t *testing.T) {
+	pubspec := `name: my_app
+version: 1.0.0
+
+# top-level comment
+dependency_overrides:
+  # path-based override
+  siigo_pos_l10n:
+    path: ../old_l10n
+
+  # quoted path
+  siigo_pos_core:
+    path: "../core"
+
+  # git-based override — must be skipped
+  siigo_pos_git:
+    git:
+      url: https://github.com/example/pkg.git
+      ref: main
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+`
+	dir := t.TempDir()
+	pubspecPath := filepath.Join(dir, "pubspec.yaml")
+	if err := os.WriteFile(pubspecPath, []byte(pubspec), 0o644); err != nil {
+		t.Fatalf("write pubspec: %v", err)
+	}
+
+	entries := mergePubspecOverrides(make(map[string]string), pubspecPath)
+
+	if entries["siigo_pos_l10n"] != "../old_l10n" {
+		t.Errorf("expected siigo_pos_l10n=../old_l10n, got %q", entries["siigo_pos_l10n"])
+	}
+	if entries["siigo_pos_core"] != "../core" {
+		t.Errorf("expected siigo_pos_core=../core, got %q", entries["siigo_pos_core"])
+	}
+	if _, ok := entries["siigo_pos_git"]; ok {
+		t.Errorf("git-based override must be skipped, but got entry for siigo_pos_git")
+	}
+	if _, ok := entries["flutter_test"]; ok {
+		t.Errorf("dev_dependencies section must not be parsed, but got entry for flutter_test")
+	}
+}
+
+func TestReadExistingOverridesRoundTripsFormatOverrideYAML(t *testing.T) {
+	input := map[string]string{
+		"siigo_pos_l10n":  "../l10n",
+		"siigo_pos_core":  "../core",
+		"siigo_pos_extra": "../../extras/extra",
+	}
+	content := formatOverrideYAML(input)
+
+	dir := t.TempDir()
+	overridePath := filepath.Join(dir, "pubspec_overrides.yaml")
+	if err := os.WriteFile(overridePath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write override file: %v", err)
+	}
+
+	got := readExistingOverrides(overridePath)
+	if !reflect.DeepEqual(got, input) {
+		t.Errorf("round-trip mismatch.\nwant=%v\n got=%v", input, got)
+	}
+}
+
+func TestWriteOverrideFileUserPackageWinsOverPubspecOverride(t *testing.T) {
+	// Scenario: pubspec.yaml has dependency_overrides with siigo_pos_l10n -> ../old
+	// User creates worktree including siigo_pos_l10n at ../new
+	// Result: siigo_pos_l10n must be ../new (user wins), not ../old
+	dir := t.TempDir()
+
+	pubspec := `name: my_app
+dependency_overrides:
+  siigo_pos_l10n:
+    path: ../old
+  siigo_pos_other:
+    path: ../other
+`
+	if err := os.WriteFile(filepath.Join(dir, "pubspec.yaml"), []byte(pubspec), 0o644); err != nil {
+		t.Fatalf("write pubspec: %v", err)
+	}
+
+	overridePath := filepath.Join(dir, "pubspec_overrides.yaml")
+	newPackages := []domain.PlannedWorktree{
+		{
+			Repo: domain.DiscoveredFlutterRepo{PackageName: "siigo_pos_l10n"},
+			Path: filepath.Join(dir, "new"),
+		},
+	}
+
+	if err := writeOverrideFile(overridePath, dir, newPackages); err != nil {
+		t.Fatalf("writeOverrideFile: %v", err)
+	}
+
+	result := readExistingOverrides(overridePath)
+	if result["siigo_pos_l10n"] != "new" {
+		t.Errorf("user package must win: want siigo_pos_l10n=new, got %q", result["siigo_pos_l10n"])
+	}
+	if result["siigo_pos_other"] != "../other" {
+		t.Errorf("pubspec override should be carried: want siigo_pos_other=../other, got %q", result["siigo_pos_other"])
+	}
+}
+
+func TestWriteOverrideFilePreservesExistingEntriesNotInPubspecOrNewPackages(t *testing.T) {
+	// Pre-existing pubspec_overrides.yaml entry not in pubspec.yaml nor in new packages
+	// must survive a rewrite.
+	dir := t.TempDir()
+
+	// pubspec.yaml with no dependency_overrides
+	if err := os.WriteFile(filepath.Join(dir, "pubspec.yaml"), []byte("name: my_app\n"), 0o644); err != nil {
+		t.Fatalf("write pubspec: %v", err)
+	}
+
+	// Pre-existing override file with a previously written entry
+	existing := formatOverrideYAML(map[string]string{
+		"siigo_pre_existing": "../pre_existing",
+	})
+	overridePath := filepath.Join(dir, "pubspec_overrides.yaml")
+	if err := os.WriteFile(overridePath, []byte(existing), 0o644); err != nil {
+		t.Fatalf("write existing overrides: %v", err)
+	}
+
+	newPackages := []domain.PlannedWorktree{
+		{
+			Repo: domain.DiscoveredFlutterRepo{PackageName: "siigo_new_pkg"},
+			Path: filepath.Join(dir, "new_pkg"),
+		},
+	}
+
+	if err := writeOverrideFile(overridePath, dir, newPackages); err != nil {
+		t.Fatalf("writeOverrideFile: %v", err)
+	}
+
+	result := readExistingOverrides(overridePath)
+	if result["siigo_pre_existing"] != "../pre_existing" {
+		t.Errorf("pre-existing entry must survive rewrite, got %q", result["siigo_pre_existing"])
+	}
+	if result["siigo_new_pkg"] != "new_pkg" {
+		t.Errorf("new package must be present, got %q", result["siigo_new_pkg"])
+	}
+}
+
 func TestBuildDryPlanPackageBranchUsesExactExplicitOrDefaultRootBranch(t *testing.T) {
 	tests := []struct {
 		name       string
