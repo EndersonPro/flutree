@@ -1704,3 +1704,412 @@ func TestErrorJSONOutput(t *testing.T) {
 		t.Fatalf("expected 'error' key in JSON output: %s", res.stderr)
 	}
 }
+
+// runMCPServeResult holds the output of a runMCPServe call.
+type runMCPServeResult struct {
+	stdout string
+	stderr string
+	code   int
+}
+
+// runMCPServe starts "flutree mcp serve", writes jsonrpcInput to its stdin,
+// closes stdin, and returns whatever the process wrote to stdout and stderr.
+// It does NOT use runCLI because that helper combines stdout+stderr and we need
+// stdout alone to parse JSON-RPC frames.
+func runMCPServe(t *testing.T, bin, cwd string, env []string, jsonrpcInput string) runMCPServeResult {
+	t.Helper()
+	cmd := exec.Command(bin, "mcp", "serve")
+	cmd.Dir = cwd
+	cmd.Env = env
+	cmd.Stdin = strings.NewReader(jsonrpcInput)
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+	err := cmd.Run()
+	code := 0
+	if err != nil {
+		code = 1
+		if ee, ok := err.(*exec.ExitError); ok && ee.ProcessState != nil {
+			code = ee.ProcessState.ExitCode()
+		}
+	}
+	return runMCPServeResult{
+		stdout: stdoutBuf.String(),
+		stderr: stderrBuf.String(),
+		code:   code,
+	}
+}
+
+// TestMCPServeRespondsToInitialize verifies that "flutree mcp serve" performs
+// the MCP handshake and writes a valid JSON-RPC initialize response to stdout.
+func TestMCPServeRespondsToInitialize(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping MCP serve integration test in short mode")
+	}
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	// Minimal JSON-RPC 2.0 initialize request followed by a newline to end stdin.
+	initRequest := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.0.1"}}}` + "\n"
+
+	res := runMCPServe(t, bin, projectRoot(t), testEnv(home), initRequest)
+
+	// The process may exit with code 0 or 1 (EOF on stdin causes graceful exit);
+	// what matters is that stdout contains a valid JSON-RPC response.
+	if res.stdout == "" {
+		t.Fatalf("mcp serve wrote nothing to stdout; stderr=%q", res.stderr)
+	}
+
+	// Parse the first line as JSON-RPC response.
+	firstLine := strings.SplitN(strings.TrimSpace(res.stdout), "\n", 2)[0]
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(firstLine), &resp); err != nil {
+		t.Fatalf("mcp serve stdout is not valid JSON on first line: %s\nerr: %v", res.stdout, err)
+	}
+
+	// Must be a JSON-RPC response with id:1.
+	if resp["jsonrpc"] != "2.0" {
+		t.Fatalf("expected jsonrpc:2.0, got: %v", resp["jsonrpc"])
+	}
+	if resp["id"] == nil {
+		t.Fatalf("expected id field in response, got: %v", resp)
+	}
+}
+
+// TestMCPServeToolsListContainsAll9Tools verifies that a tools/list request
+// returns exactly the 9 advertised tool names.
+func TestMCPServeToolsListContainsAll9Tools(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping MCP serve integration test in short mode")
+	}
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	// Send initialize then tools/list. Each request on its own line (newline-delimited JSON-RPC).
+	requests := "" +
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.0.1"}}}` + "\n" +
+		`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}` + "\n"
+
+	res := runMCPServe(t, bin, projectRoot(t), testEnv(home), requests)
+
+	if res.stdout == "" {
+		t.Fatalf("mcp serve wrote nothing to stdout; stderr=%q", res.stderr)
+	}
+
+	// Find the tools/list response (id == 2) among all lines.
+	var toolsResp map[string]interface{}
+	for _, line := range strings.Split(strings.TrimSpace(res.stdout), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var frame map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &frame); err != nil {
+			continue
+		}
+		// JSON-RPC numbers unmarshal as float64.
+		if id, ok := frame["id"].(float64); ok && id == 2 {
+			toolsResp = frame
+			break
+		}
+	}
+	if toolsResp == nil {
+		t.Fatalf("no response with id==2 found in stdout:\n%s", res.stdout)
+	}
+
+	result, ok := toolsResp["result"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected result object in tools/list response, got: %v", toolsResp)
+	}
+	tools, ok := result["tools"].([]interface{})
+	if !ok {
+		t.Fatalf("expected tools array in result, got: %v", result)
+	}
+
+	wantTools := []string{
+		"list_worktrees", "create_worktree", "add_repo",
+		"complete_worktree", "pubget", "clean_worktree",
+		"get_config", "set_config", "get_version",
+	}
+	if len(tools) != len(wantTools) {
+		t.Fatalf("expected %d tools, got %d: %v", len(wantTools), len(tools), tools)
+	}
+
+	got := make(map[string]bool)
+	for _, tool := range tools {
+		if m, ok := tool.(map[string]interface{}); ok {
+			if name, ok := m["name"].(string); ok {
+				got[name] = true
+			}
+		}
+	}
+	for _, name := range wantTools {
+		if !got[name] {
+			t.Fatalf("expected tool %q in tools/list response; got tools: %v", name, got)
+		}
+	}
+}
+
+// TestMCPServeWritesNothingExtraToStdout verifies that stdout contains only
+// valid JSON-RPC frames — no startup banners, log lines, or other output.
+func TestMCPServeWritesNothingExtraToStdout(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping MCP serve integration test in short mode")
+	}
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	initRequest := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.0.1"}}}` + "\n"
+
+	res := runMCPServe(t, bin, projectRoot(t), testEnv(home), initRequest)
+
+	// Every non-empty line on stdout MUST be valid JSON.
+	for i, line := range strings.Split(res.stdout, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var v interface{}
+		if err := json.Unmarshal([]byte(line), &v); err != nil {
+			t.Fatalf("line %d of stdout is not valid JSON (no non-JSON output allowed): %q\nerr: %v", i+1, line, err)
+		}
+	}
+}
+
+// TestMCPServeUnknownCommandReturnsError verifies that "flutree mcp unknown"
+// exits with a non-zero code and an error message.
+func TestMCPServeUnknownSubcommandReturnsError(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	res := runCLI(t, bin, projectRoot(t), testEnv(home), "", "mcp", "unknown")
+	if res.code == 0 {
+		t.Fatalf("expected non-zero exit for unknown mcp subcommand, got 0; stdout=%s", res.stdout)
+	}
+}
+
+// --------------------------------------------------------------------------
+// mcp install contract tests
+// --------------------------------------------------------------------------
+
+// TestMCPInstallInvalidClientExitsNonZero verifies that --client with an
+// unknown value causes exit 1 and an error message before any file is written.
+func TestMCPInstallInvalidClientExitsNonZero(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	res := runCLI(t, bin, projectRoot(t), testEnv(home), "", "mcp", "install", "--client", "foobar")
+	if res.code == 0 {
+		t.Fatalf("expected non-zero exit for unknown client, got 0; stdout=%s", res.stdout)
+	}
+	combined := res.stderr + res.stdout
+	if !strings.Contains(combined, "foobar") {
+		t.Fatalf("expected error message to mention the unknown client name; got: %s", combined)
+	}
+}
+
+// TestMCPInstallNoClientsDetectedExitsZero verifies that when no known AI
+// coding clients are present, the command exits 0 (no error — nothing to do).
+func TestMCPInstallNoClientsDetectedExitsZero(t *testing.T) {
+	bin := buildCLI(t)
+	// Use a completely empty home so neither binary lookup nor config dirs can
+	// succeed. Provide a minimal PATH that contains only a shell (for exec.LookPath
+	// to work), but does not contain claude/opencode/codex.
+	home := t.TempDir()
+
+	res := runCLI(t, bin, projectRoot(t), testEnv(home), "", "mcp", "install")
+	if res.code != 0 {
+		t.Fatalf("expected exit 0 when no clients detected, got %d; stderr=%s stdout=%s", res.code, res.stderr, res.stdout)
+	}
+}
+
+// TestMCPInstallClaudeCreatesConfigEntry verifies that when ~/.claude.json does
+// not exist but detection passes via the --client flag, the installer creates
+// the file with the correct entry shape.
+func TestMCPInstallClaudeCreatesConfigEntry(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	// Pre-create ~/.claude.json as an empty object so detection succeeds
+	// (config file exists path) without needing the binary on PATH.
+	claudeJSON := filepath.Join(home, ".claude.json")
+	if err := os.WriteFile(claudeJSON, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res := runCLI(t, bin, projectRoot(t), testEnv(home), "", "mcp", "install", "--client", "claude-code")
+	if res.code != 0 {
+		t.Fatalf("expected exit 0 for claude-code install, got %d; stderr=%s stdout=%s", res.code, res.stderr, res.stdout)
+	}
+
+	// Read back the config and verify entry shape.
+	content, err := os.ReadFile(claudeJSON)
+	if err != nil {
+		t.Fatalf("failed to read ~/.claude.json after install: %v", err)
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(content, &cfg); err != nil {
+		t.Fatalf("~/.claude.json is not valid JSON after install: %v\ncontent: %s", err, content)
+	}
+	mcpServers, ok := cfg["mcpServers"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected mcpServers object in ~/.claude.json, got: %v", cfg)
+	}
+	flutree, ok := mcpServers["flutree"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected mcpServers.flutree object, got: %v", mcpServers)
+	}
+	if flutree["type"] != "stdio" {
+		t.Fatalf("expected type=stdio, got: %v", flutree["type"])
+	}
+	args, ok := flutree["args"].([]interface{})
+	if !ok || len(args) != 2 || args[0] != "mcp" || args[1] != "serve" {
+		t.Fatalf("expected args=[mcp serve], got: %v", flutree["args"])
+	}
+}
+
+// TestMCPInstallAlreadyExistsSkips verifies that when the entry already exists
+// and --force is NOT set, the file is not modified and the result is already_exists.
+func TestMCPInstallAlreadyExistsSkips(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	// Pre-create ~/.claude.json with the flutree entry already present.
+	claudeJSON := filepath.Join(home, ".claude.json")
+	initial := `{"mcpServers":{"flutree":{"type":"stdio","command":"/old/path/flutree","args":["mcp","serve"]}}}`
+	if err := os.WriteFile(claudeJSON, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res := runCLI(t, bin, projectRoot(t), testEnv(home), "", "mcp", "install", "--client", "claude-code")
+	if res.code != 0 {
+		t.Fatalf("expected exit 0 for already_exists, got %d; stderr=%s stdout=%s", res.code, res.stderr, res.stdout)
+	}
+
+	// File content must be unchanged.
+	after, err := os.ReadFile(claudeJSON)
+	if err != nil {
+		t.Fatalf("failed to read ~/.claude.json: %v", err)
+	}
+	if string(after) != initial {
+		t.Fatalf("expected file unchanged on already_exists, but it was modified:\nbefore: %s\nafter: %s", initial, string(after))
+	}
+
+	combined := res.stdout + res.stderr
+	if !strings.Contains(combined, "already_exists") && !strings.Contains(combined, "SKIP") {
+		t.Fatalf("expected already_exists or SKIP in output, got: %s", combined)
+	}
+}
+
+// TestMCPInstallForceOverwrites verifies that --force overwrites an existing entry.
+func TestMCPInstallForceOverwrites(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	claudeJSON := filepath.Join(home, ".claude.json")
+	initial := `{"mcpServers":{"flutree":{"type":"stdio","command":"/old/path/flutree","args":["mcp","serve"]}}}`
+	if err := os.WriteFile(claudeJSON, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res := runCLI(t, bin, projectRoot(t), testEnv(home), "", "mcp", "install", "--client", "claude-code", "--force")
+	if res.code != 0 {
+		t.Fatalf("expected exit 0 for force install, got %d; stderr=%s stdout=%s", res.code, res.stderr, res.stdout)
+	}
+
+	after, err := os.ReadFile(claudeJSON)
+	if err != nil {
+		t.Fatalf("failed to read ~/.claude.json: %v", err)
+	}
+	// The entry must have been updated (command should NOT still be /old/path/flutree).
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(after, &cfg); err != nil {
+		t.Fatalf("~/.claude.json is not valid JSON after --force: %v", err)
+	}
+	mcpServers := cfg["mcpServers"].(map[string]interface{})
+	flutree := mcpServers["flutree"].(map[string]interface{})
+	if flutree["command"] == "/old/path/flutree" {
+		t.Fatalf("expected command to be updated after --force, still has old value")
+	}
+}
+
+// TestMCPInstallJSONOutput verifies the --json flag produces a JSON object
+// keyed by client name with the expected per-client result shape.
+func TestMCPInstallJSONOutput(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	// Pre-create ~/.claude.json so claude-code is detected.
+	claudeJSON := filepath.Join(home, ".claude.json")
+	if err := os.WriteFile(claudeJSON, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res := runCLI(t, bin, projectRoot(t), testEnv(home), "", "mcp", "install", "--client", "claude-code", "--json")
+	if res.code != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr=%s stdout=%s", res.code, res.stderr, res.stdout)
+	}
+
+	var out map[string]interface{}
+	if err := json.Unmarshal([]byte(res.stdout), &out); err != nil {
+		t.Fatalf("expected JSON object from --json flag, got: %s\nerr: %v", res.stdout, err)
+	}
+	claudeResult, ok := out["claude-code"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected claude-code key in JSON output, got keys: %v", out)
+	}
+	if claudeResult["status"] == nil {
+		t.Fatalf("expected status field in per-client result, got: %v", claudeResult)
+	}
+	if claudeResult["client"] == nil {
+		t.Fatalf("expected client field in per-client result, got: %v", claudeResult)
+	}
+}
+
+// TestMCPInstallPreservesExistingKeys verifies that the non-destructive merge
+// invariant holds: keys other than mcpServers.flutree are unchanged.
+func TestMCPInstallPreservesExistingKeys(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	claudeJSON := filepath.Join(home, ".claude.json")
+	initial := `{"projects":{"foo":"bar"},"auth":{"token":"secret"},"mcpServers":{"other":{"type":"stdio","command":"other-cmd","args":[]}}}`
+	if err := os.WriteFile(claudeJSON, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res := runCLI(t, bin, projectRoot(t), testEnv(home), "", "mcp", "install", "--client", "claude-code")
+	if res.code != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr=%s stdout=%s", res.code, res.stderr, res.stdout)
+	}
+
+	after, err := os.ReadFile(claudeJSON)
+	if err != nil {
+		t.Fatalf("failed to read ~/.claude.json: %v", err)
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(after, &cfg); err != nil {
+		t.Fatalf("~/.claude.json is not valid JSON: %v", err)
+	}
+
+	// projects and auth keys must be preserved.
+	if projects, ok := cfg["projects"].(map[string]interface{}); !ok || projects["foo"] != "bar" {
+		t.Fatalf("expected projects.foo=bar to be preserved, got: %v", cfg["projects"])
+	}
+	if auth, ok := cfg["auth"].(map[string]interface{}); !ok || auth["token"] != "secret" {
+		t.Fatalf("expected auth.token=secret to be preserved, got: %v", cfg["auth"])
+	}
+
+	// The other MCP server entry must still be there.
+	mcpServers, ok := cfg["mcpServers"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected mcpServers to be present: %v", cfg)
+	}
+	if _, ok := mcpServers["other"]; !ok {
+		t.Fatalf("expected mcpServers.other to be preserved: %v", mcpServers)
+	}
+	// And the new flutree entry must be added.
+	if _, ok := mcpServers["flutree"]; !ok {
+		t.Fatalf("expected mcpServers.flutree to be added: %v", mcpServers)
+	}
+}
