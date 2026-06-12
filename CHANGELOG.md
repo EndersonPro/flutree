@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0](https://github.com/EndersonPro/flutree/compare/v1.0.2...v1.1.0) (2026-06-12)
+
+
+### Features
+
+* **build:** guard cli_contract_test.go for non-Windows and extract projectRoot helper ([6b78541](https://github.com/EndersonPro/flutree/commit/6b785412176fb6b19bdd542405b3523a944d315e))
+* **ci:** add release.yml goreleaser workflow triggered on v* tag push ([41d24b1](https://github.com/EndersonPro/flutree/commit/41d24b117f4fb8c80fc1262ba538c86b325277f3))
+* **ci:** add windows-build cross-compile CI job to tests.yml ([bd42331](https://github.com/EndersonPro/flutree/commit/bd4233176f62ea63e18fcf9af46555cacb7c5a47))
+* **release:** add .goreleaser.yaml for multi-platform build and publish ([649ee4b](https://github.com/EndersonPro/flutree/commit/649ee4b04d4a99698c76f09c407b5af9e73c9c4d))
+* **update:** add GOOS seam to BrewGateway with Scoop update hint on Windows ([0ba4e84](https://github.com/EndersonPro/flutree/commit/0ba4e84a2af1c8c58b26b210ae8ab107c473d50b))
+
+
+### Bug Fixes
+
+* **release:** align goreleaser assets with existing naming, append mode, and pinned version ([6bb9ac7](https://github.com/EndersonPro/flutree/commit/6bb9ac7e6d0a3c4bc2bbc8a5e6bc745f496cd89a))
+* **release:** migrate to goreleaser v2 formats syntax and document brews deprecation decision ([ccd1804](https://github.com/EndersonPro/flutree/commit/ccd1804f0c21686fcd17a5d4f0e27f4e361fa93a))
+* **release:** restore linux/arm64 build target per spec ([ce43190](https://github.com/EndersonPro/flutree/commit/ce4319007c033f0526b3bd39d94e4fd7d9e681ec))
+
 ## [1.0.2](https://github.com/EndersonPro/flutree/compare/v1.0.1...v1.0.2) (2026-06-12)
 
 
