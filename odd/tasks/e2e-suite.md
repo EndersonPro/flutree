@@ -13,7 +13,7 @@ Branch: `feat/e2e-suite` (stacked on `feat/cobra-migration`) · Delivery: `ask-o
 | ID | Specs | Route | Status | Commit |
 | --- | --- | --- | --- | --- |
 | T1 | S1, S2 | inline | done | 6d110e4, 7e32ef0 |
-| T2 | S3 | inline | done | (hook commit) |
+| T2 | S3 | inline | done | 9fa5443 |
 | T3 | S4 | inline | blocked (needs bug list) | — |
 
 ## Log
@@ -29,3 +29,4 @@ Branch: `feat/e2e-suite` (stacked on `feat/cobra-migration`) · Delivery: `ask-o
   - B4 (open): `clean` outside a Git repository surfaces the raw git failure ("[git] Git command failed: git rev-parse --show-toplevel" plus a localized git hint).
   - Not a bug: `list` groups package worktrees under their workspace row (`package_count`).
 - L6 T2: `scripts/e2e.sh` + `.githooks/pre-push`; enabled locally with `git config core.hooksPath .githooks`. Verified pass (exit 0) and abort on failure (exit 1). CONTRIBUTING documents e2e-first convention and the hook.
+- L7 Review 3cd035a..9fa5443 (high: executable hook, shell script): granted, approved, acknowledged. Follow-ups (non-blocking): `create --json` in interactive mode hides the dry plan before the APPLY prompt; JSON-purity subtests depend on order (complete runs last) and shadow `tc`; a failed shared build is reported by every test; B4 test pins known-bad output.
