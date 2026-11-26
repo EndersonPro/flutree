@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Blocks the push when the end-to-end CLI suite fails.
+# Enable once per clone:   git config core.hooksPath .githooks
+# Skip in an emergency:    git push --no-verify
+set -euo pipefail
+
+if ! "$(git rev-parse --show-toplevel)/scripts/e2e.sh"; then
+  echo >&2
+  echo "pre-push: e2e suite failed; push aborted. Fix the failures or use 'git push --no-verify'." >&2
+  exit 1
+fi
