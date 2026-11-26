@@ -167,3 +167,36 @@ func TestVersionFlagHonorsJSONAndRejectsArguments(t *testing.T) {
 		t.Fatalf("unexpected stderr: %s", extra.stderr)
 	}
 }
+
+func TestJSONEnvelopeForMissingNameAndUnknownFlag(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	cases := map[string]struct {
+		args    []string
+		message string
+	}{
+		"missing name": {[]string{"--json", "create"}, "Missing worktree name."},
+		"unknown flag": {[]string{"--json", "create", "foo", "--bogus"}, "unknown flag: --bogus"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			res := runCLI(t, bin, projectRoot(t), testEnv(home), "", tc.args...)
+			if res.code != 2 {
+				t.Fatalf("expected 2, got %d (%s)", res.code, res.stdout)
+			}
+			var out struct {
+				Error struct {
+					Category string `json:"category"`
+					Message  string `json:"message"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(res.stderr), &out); err != nil {
+				t.Fatalf("expected JSON envelope, got: %s", res.stderr)
+			}
+			if out.Error.Category != "input" || out.Error.Message != tc.message {
+				t.Fatalf("unexpected envelope: %+v", out.Error)
+			}
+		})
+	}
+}

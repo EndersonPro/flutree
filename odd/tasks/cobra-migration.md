@@ -13,7 +13,8 @@ Branch: `feat/cobra-migration` · Delivery: `ask-on-risk` · Runner: `go test ./
 | ID | Specs | Route | Status | Commit |
 | --- | --- | --- | --- | --- |
 | T1 | S1, S2, S3 | inline (one coherent unit, no writer reason) | done | 847edb8 |
-| T2 | S4 | inline | done | (docs commit) |
+| T2 | S4 | inline | done | 01eee0d |
+| T3 | S1, S3 | inline (verifier blockers) | done | (fix commit) |
 
 ## Log
 
@@ -23,3 +24,5 @@ Branch: `feat/cobra-migration` · Delivery: `ask-on-risk` · Runner: `go test ./
 - Risk: item 3 (CLI output contract, requested) and item 5 (new dependency spf13/cobra).
 - L4 T1: RED observed (12 failing tests: help usage lines, unknown command, completion, flag errors, flags before name, group help, config unknown action). GREEN: `go test ./...` all ok. Differential check vs `main` on 28 invocations: identical except intended `[options]`→`[flags]` hints and leading `--json` now formatting output (old code ignored it; pinned by TestLeadingJSONFlagFormatsCommandOutput). golangci-lint not installed locally — runs in CI.
 - L5 T2: README (2.0 notes, global `--json`, `completion` section, `[flags]` usage) and docs/architecture.md (Cobra command layer, how to add a command). Docs contract tests ok.
+- L6 Verification: `gentle-ai review assess` → high (item 5 escalation, executable change). Independent verifier: S2, S4 pass; S1, S3 partial. Blockers: `--version --json` printed bare version; `--version extra` exited 0. Unrequested break surfaced: single-dash long flags (`-all`) rejected by pflag.
+- L7 T3: RED on TestVersionFlagHonorsJSONAndRejectsArguments; fixed by replacing Cobra's built-in version flag with a root `--version` flag routed through the version command's validation and output. Added TestJSONEnvelopeForMissingNameAndUnknownFlag and TestRepeatableFlagsKeepCommasInsideValues. Full suite green; blocker recheck green. Single-dash break documented in README 2.0 notes and the fix commit footer.

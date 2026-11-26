@@ -120,7 +120,8 @@ Default destination root is `~/Documents/worktrees`, generating:
   - flags may appear before or after positional arguments (`flutree create --non-interactive feature-x`),
   - `--json` is a global flag and works before or after the command (`flutree --json list`),
   - unknown commands report `unknown command "x" for "flutree"` with suggestions (exit code `2`),
-  - new `flutree completion <bash|zsh|fish|powershell>` command.
+  - new `flutree completion <bash|zsh|fish|powershell>` command,
+  - long flags require two dashes: single-dash forms such as `-all` or `-json` are no longer accepted (use `--all`, `--json`).
 - Every subcommand supports command-scoped help via `--help` and `-h`.
 - `create --no-package` is now an explicit root-only mode:
   - package selection is skipped in interactive mode,
