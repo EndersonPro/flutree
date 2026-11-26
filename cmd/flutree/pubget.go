@@ -17,7 +17,12 @@ func newPubGetCmd() *cobra.Command {
 		Args:  requireName("Missing workspace name.", "Usage: flutree pubget <name> [--force]"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service := app.NewPubGetService(registry.NewDefault(), &infraPub.Gateway{})
-			stopLoading := ui.StartLoading("Running pub get across workspace...")
+			// The progress indicator writes to stdout, which must carry only the
+			// JSON document in --json mode.
+			stopLoading := func(bool) {}
+			if !jsonOutput(cmd) {
+				stopLoading = ui.StartLoading("Running pub get across workspace...")
+			}
 			result, err := service.Run(domain.PubGetInput{Name: args[0], Force: force})
 			stopLoading(err == nil)
 			if err != nil {

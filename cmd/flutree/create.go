@@ -152,7 +152,10 @@ func runCreate(cmd *cobra.Command, name string, opts *createOptions) error {
 		return err
 	}
 
-	ui.RenderCreateDryPlan(plan)
+	// In --json mode stdout carries only the final JSON document.
+	if !jsonOutput(cmd) {
+		ui.RenderCreateDryPlan(plan)
+	}
 
 	if opts.nonInteractive {
 		confirmed, err := promptAdapter.ConfirmWithToken("Dry plan ready.", "APPLY", true, opts.yes)
