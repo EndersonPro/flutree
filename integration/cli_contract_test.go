@@ -264,7 +264,7 @@ func TestCLIHelpListsExpectedCommands(t *testing.T) {
 			t.Errorf("help output missing command %q: %s", cmd, res.stdout)
 		}
 	}
-	if !strings.Contains(res.stdout, "flutree <subcommand> --help") {
+	if !strings.Contains(res.stdout, `Use "flutree [command] --help"`) {
 		t.Fatalf("expected subcommand help hint, got: %s", res.stdout)
 	}
 }
@@ -289,42 +289,42 @@ func TestSubcommandHelpContracts(t *testing.T) {
 		{
 			name:     "create long help",
 			args:     []string{"create", "--help"},
-			contains: []string{"flutree create <name> [options]", "--branch", "--root-repo", "--no-package", "--package", "--package-base", "--copy-root-file"},
+			contains: []string{"flutree create <name> [flags]", "--branch", "--root-repo", "--no-package", "--package", "--package-base", "--copy-root-file"},
 		},
 		{
 			name:     "create short help",
 			args:     []string{"create", "-h"},
-			contains: []string{"flutree create <name> [options]", "--branch", "--root-repo", "--no-package", "--package"},
+			contains: []string{"flutree create <name> [flags]", "--branch", "--root-repo", "--no-package", "--package"},
 		},
 		{
 			name:     "add-repo help",
 			args:     []string{"add-repo", "--help"},
-			contains: []string{"flutree add-repo <workspace> [options]", "--repo", "--package-base", "--package-branch-source", "--sync-policy", "--reuse-existing-branch", "--copy-root-file"},
+			contains: []string{"flutree add-repo <workspace> [flags]", "--repo", "--package-base", "--package-branch-source", "--sync-policy", "--reuse-existing-branch", "--copy-root-file"},
 		},
 		{
 			name:     "complete help",
 			args:     []string{"complete", "--help"},
-			contains: []string{"flutree complete <name> [options]", "--yes", "--force"},
+			contains: []string{"flutree complete <name> [flags]", "--yes", "--force"},
 		},
 		{
 			name:     "pubget help",
 			args:     []string{"pubget", "--help"},
-			contains: []string{"flutree pubget <name> [options]", "--force"},
+			contains: []string{"flutree pubget <name> [flags]", "--force"},
 		},
 		{
 			name:     "clean help",
 			args:     []string{"clean", "--help"},
-			contains: []string{"flutree clean [options]", "--force"},
+			contains: []string{"flutree clean [flags]", "--force"},
 		},
 		{
 			name:     "list help",
 			args:     []string{"list", "--help"},
-			contains: []string{"flutree list [options]", "--all", "--global"},
+			contains: []string{"flutree list [flags]", "--all", "--global"},
 		},
 		{
 			name:     "update help",
 			args:     []string{"update", "--help"},
-			contains: []string{"flutree update [options]", "--check", "--apply"},
+			contains: []string{"flutree update [flags]", "--check", "--apply"},
 		},
 		{
 			name:     "version help",
@@ -597,7 +597,7 @@ func TestUnknownCommandExitsNonZero(t *testing.T) {
 	if res.code == 0 {
 		t.Fatalf("expected non-zero exit")
 	}
-	if !strings.Contains(res.stderr, "No such command") {
+	if res.code != 2 || !strings.Contains(res.stderr, `unknown command "unknown-command" for "flutree"`) {
 		t.Fatalf("unexpected stderr: %s", res.stderr)
 	}
 }
