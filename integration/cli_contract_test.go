@@ -19,16 +19,22 @@ import (
 	"github.com/creack/pty"
 )
 
+// buildCLI returns the flutree binary under test. It is compiled once per
+// test run and shared by every e2e test (see TestMain in e2e_helpers_test.go).
 func buildCLI(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "flutree")
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/flutree")
-	cmd.Dir = projectRoot(t)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
+	cliBuild.once.Do(func() {
+		cmd := exec.Command("go", "build", "-o", filepath.Join(cliBuild.dir, "flutree"), "./cmd/flutree")
+		cmd.Dir = projectRoot(t)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			cliBuild.err = err
+			cliBuild.out = string(out)
+		}
+	})
+	if cliBuild.err != nil {
+		t.Fatalf("build failed: %v\n%s", cliBuild.err, cliBuild.out)
 	}
-	return bin
+	return filepath.Join(cliBuild.dir, "flutree")
 }
 
 type runResult struct {
