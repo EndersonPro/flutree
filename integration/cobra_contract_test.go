@@ -145,3 +145,25 @@ func TestLeadingJSONFlagFormatsCommandOutput(t *testing.T) {
 		t.Fatalf("expected same output for --json before and after the command: %q vs %q", prefix.stdout, suffix.stdout)
 	}
 }
+
+func TestVersionFlagHonorsJSONAndRejectsArguments(t *testing.T) {
+	bin := buildCLI(t)
+	home := t.TempDir()
+
+	res := runCLI(t, bin, projectRoot(t), testEnv(home), "", "--version", "--json")
+	if res.code != 0 {
+		t.Fatalf("expected 0, got %d (%s)", res.code, res.stderr)
+	}
+	var out map[string]string
+	if err := json.Unmarshal([]byte(res.stdout), &out); err != nil || out["version"] == "" {
+		t.Fatalf("expected JSON version output, got: %s", res.stdout)
+	}
+
+	extra := runCLI(t, bin, projectRoot(t), testEnv(home), "", "--version", "extra")
+	if extra.code != 2 {
+		t.Fatalf("expected 2, got %d (%s)", extra.code, extra.stdout)
+	}
+	if !strings.Contains(extra.stderr, "[input] Version command does not accept arguments.") {
+		t.Fatalf("unexpected stderr: %s", extra.stderr)
+	}
+}

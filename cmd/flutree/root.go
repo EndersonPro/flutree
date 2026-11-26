@@ -24,11 +24,20 @@ type cliState struct {
 
 func newRootCmd(state *cliState) *cobra.Command {
 	root := &cobra.Command{
-		Use:     "flutree",
-		Short:   "Manage Git worktree lifecycle for Flutter-oriented flows.",
-		Version: displayVersion(),
-		Args:    noUnknownSubcommand,
+		Use:   "flutree",
+		Short: "Manage Git worktree lifecycle for Flutter-oriented flows.",
+		// --version is a regular flag instead of Cobra's built-in one so it shares
+		// the version command's argument validation and --json support.
+		Args: func(cmd *cobra.Command, args []string) error {
+			if showVersion, _ := cmd.Flags().GetBool("version"); showVersion {
+				return validateVersionArgs(cmd, args)
+			}
+			return noUnknownSubcommand(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if showVersion, _ := cmd.Flags().GetBool("version"); showVersion {
+				return printVersion(cmd)
+			}
 			return cmd.Help()
 		},
 		PersistentPreRun: func(_ *cobra.Command, _ []string) {
@@ -38,7 +47,7 @@ func newRootCmd(state *cliState) *cobra.Command {
 		SilenceErrors:              true,
 		SuggestionsMinimumDistance: 2,
 	}
-	root.SetVersionTemplate("{{.Version}}\n")
+	root.Flags().Bool("version", false, "Show version")
 	root.PersistentFlags().Bool("json", false, "Output results as JSON.")
 	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		return usageError(cmd, err.Error())
