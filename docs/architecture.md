@@ -5,7 +5,9 @@
 ## Layers
 
 ## 1) Command Layer (`cmd/flutree`)
-- CLI handlers map arguments/options to typed input models.
+- Built on [spf13/cobra](https://github.com/spf13/cobra): `root.go` defines the root command, the global `--json` flag and error mapping; each command lives in its own file (`create.go`, `add_repo.go`, `mcp.go`, ...). `main.go` only executes the root command and hands errors to `internal/runtime`.
+- CLI handlers map arguments/flags to typed input models.
+- Errors Cobra raises before a command runs (unknown command, unknown flag, bad arguments) are mapped to `input` errors (exit code 2).
 - Commands call services and then render output.
 - They do not execute Git subprocesses or parse files directly.
 - Discovery scope is resolved in command handlers with precedence: explicit `--scope` > persisted `scope.root` > `.`.
@@ -56,8 +58,8 @@ CLI -> `ListService` -> `RegistryRepository` + `GitGateway` reconciliation -> `r
 1. Add a new service in `internal/app/`.
 2. Extend typed models/errors if needed in `internal/domain/`.
 3. Add/extend adapters only for IO boundaries (Git, filesystem, prompts).
-4. Add a command handler in `cmd/flutree/main.go`.
-5. Register command in CLI dispatch.
+4. Add a `new<Name>Cmd()` constructor in its own file under `cmd/flutree/`.
+5. Register it with `root.AddCommand(...)` in `cmd/flutree/root.go`.
 6. Add tests for service/adapter behavior and integration tests for command contract.
 
 Guardrail: keep infrastructure out of command handlers and workflow logic out of adapters.

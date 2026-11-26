@@ -21,6 +21,7 @@
   - [list](#list)
   - [complete](#complete)
   - [pubget](#pubget)
+  - [completion](#completion)
 - [🛠️ Quickstart](#%EF%B8%8F-quickstart)
 - [🆕 Recent CLI adjustments](#-recent-cli-adjustments)
 - [⚙️ Advanced Usage](#%EF%B8%8F-advanced-usage)
@@ -114,6 +115,12 @@ Default destination root is `~/Documents/worktrees`, generating:
 
 ## 🆕 Recent CLI adjustments
 
+- **2.0 (breaking):** the CLI is built on [Cobra](https://github.com/spf13/cobra):
+  - help is Cobra-formatted and also available as `flutree help <command>`,
+  - flags may appear before or after positional arguments (`flutree create --non-interactive feature-x`),
+  - `--json` is a global flag and works before or after the command (`flutree --json list`),
+  - unknown commands report `unknown command "x" for "flutree"` with suggestions (exit code `2`),
+  - new `flutree completion <bash|zsh|fish|powershell>` command.
 - Every subcommand supports command-scoped help via `--help` and `-h`.
 - `create --no-package` is now an explicit root-only mode:
   - package selection is skipped in interactive mode,
@@ -171,8 +178,8 @@ Use `--no-workspace` to skip `.code-workspace` output entirely.
 
 All subcommands support:
 
-- `--help`
-- `-h`
+- `--help` / `-h` (or `flutree help <command>`)
+- `--json` (global flag) to print machine-readable output and JSON error envelopes
 
 ### create
 
@@ -180,7 +187,7 @@ Creates a managed worktree and stores metadata in a global registry.
 
 Usage:
 ```
-flutree create <name> [options]
+flutree create <name> [flags]
 ```
 
 | Flag | Type | Default | Description |
@@ -206,7 +213,7 @@ In interactive TTY mode (without `--repo` and without `--non-interactive`) it la
 
 Usage:
 ```
-flutree add-repo <workspace> [options]
+flutree add-repo <workspace> [flags]
 ```
 
 | Flag | Type | Default | Description |
@@ -240,7 +247,7 @@ Use `--global` to force global registry scope from any location.
 
 Usage:
 ```
-flutree list [options]
+flutree list [flags]
 ```
 
 | Flag | Type | Default | Description |
@@ -255,7 +262,7 @@ If a recorded path is already missing, completion performs stale registry cleanu
 
 Usage:
 ```
-flutree complete <name> [options]
+flutree complete <name> [flags]
 ```
 
 | Flag | Type | Default | Description |
@@ -276,6 +283,19 @@ flutree pubget <name> [--force]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--force` | boolean | `false` | Clean cache and remove `pubspec.lock` before `pub get` |
+
+### completion
+
+Generate a shell completion script:
+
+```bash
+flutree completion bash > /etc/bash_completion.d/flutree
+flutree completion zsh > "${fpath[1]}/_flutree"
+flutree completion fish > ~/.config/fish/completions/flutree.fish
+flutree completion powershell | Out-String | Invoke-Expression
+```
+
+Run `flutree completion <shell> --help` for per-shell setup details.
 
 ## 🔄 Version and update
 
