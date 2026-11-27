@@ -58,7 +58,13 @@ func (inst *Installer) Install(opts Options) ([]InstallResult, error) {
 	return inst.each(opts, func(m Merger) InstallResult {
 		res := InstallResult{Client: m.Name(), DryRun: opts.DryRun}
 		c, isClient := m.(Client)
-		if isClient && opts.DryRun {
+		if opts.DryRun {
+			// A dry run must never reach Merge, which writes the config.
+			if !isClient {
+				res.Status = OutcomeError
+				res.Message = "dry run is not supported for this client; nothing was written"
+				return res
+			}
 			return dryInstall(c, absCmd, opts.Force, res)
 		}
 		outcome, mergeErr := m.Merge(absCmd, opts.Force)

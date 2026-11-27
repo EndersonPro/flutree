@@ -238,3 +238,20 @@ func writePerm(t *testing.T, path string, data []byte, perm os.FileMode) {
 		t.Fatal(err)
 	}
 }
+
+// A dry run must never write, even for a merger that cannot preview.
+func TestInstaller_DryRunNeverMergesNonPreviewableMerger(t *testing.T) {
+	fake := &fakeMerger{name: "legacy", detects: true, outcome: mcpinstall.OutcomeConfigured}
+	inst := mcpinstall.NewInstaller([]mcpinstall.Merger{fake}, mcpinstall.ExecResolver("/usr/local/bin/flutree"))
+
+	results, err := inst.Install(mcpinstall.Options{DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fake.mergeCalled {
+		t.Fatalf("dry run called Merge, which writes the config")
+	}
+	if len(results) != 1 || results[0].Status != mcpinstall.OutcomeError || !results[0].DryRun {
+		t.Fatalf("expected an error outcome for the non-previewable client, got %+v", results)
+	}
+}

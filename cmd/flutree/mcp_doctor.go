@@ -52,7 +52,9 @@ func newMCPDoctorCmd() *cobra.Command {
 			}
 			failed := !rep.Handshake.OK
 			for _, c := range checks {
-				if c.EntryPresent && !c.CommandOK {
+				// A detected client whose config cannot be read, or whose
+				// entry points at a missing executable, is a failure.
+				if (c.Detected && c.Message != "") || (c.EntryPresent && !c.CommandOK) {
 					failed = true
 				}
 			}

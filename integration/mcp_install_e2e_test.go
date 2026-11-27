@@ -401,3 +401,15 @@ func TestMCPDoctorBrokenCommandPathFails(t *testing.T) {
 		t.Fatalf("expected [ERR] for broken command, got:\n%s", text.stdout)
 	}
 }
+
+// doctor must fail (exit 1) when a client's config cannot be read.
+func TestMCPDoctorFailsOnUnreadableClientConfig(t *testing.T) {
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".cursor", "mcp.json"), "{not json")
+
+	res := runE2E(t, home, testEnv(home), "mcp", "doctor")
+	res.requireCode(t, 1)
+	if !strings.Contains(res.stdout, "[ERR]  cursor:") {
+		t.Fatalf("expected an [ERR] line for cursor, got:\n%s", res.stdout)
+	}
+}
