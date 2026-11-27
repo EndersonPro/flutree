@@ -390,11 +390,14 @@ flutree ships a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP)
 ### Quickstart
 
 ```bash
-flutree mcp install   # auto-detect clients and write config
+flutree mcp install            # auto-detect clients and write config
+flutree mcp install --dry-run  # preview target files and entries, write nothing
+flutree mcp doctor             # verify binary, client entries and a live handshake
+flutree mcp uninstall          # remove only the flutree entry
 # restart your AI coding client
 ```
 
-That is all. The installer detects which clients are present, writes the entry non-destructively (existing entries are preserved unless `--force` is passed), and prints one line per client.
+The installer detects which clients are present, writes the entry non-destructively (existing keys, other servers and an existing flutree entry are preserved unless `--force` is passed), and prints one line per client.
 
 ### MCP tools
 
@@ -414,23 +417,34 @@ That is all. The installer detects which clients are present, writes the entry n
 
 | Flag | Description |
 |------|-------------|
-| `--client <names>` | Comma-separated list of clients to target: `claude-code`, `opencode`, `codex`. Omit to target all detected clients. |
+| `--client <names>` | Comma-separated clients to target: `claude-code`, `opencode`, `codex`, `cursor`, `vscode`, `gemini`, `claude-desktop`, `windsurf`. Omit to target all detected clients. |
+| `--scope user\|project` | `user` (default) writes the per-user config; `project` writes the config of the current directory. Clients without a project config report `unsupported_scope` (not an error). |
+| `--dry-run` | Print, per client, the target file and the exact entry it would write; writes nothing. Works with `--json`. |
 | `--force` | Overwrite an existing entry. For clients whose config contains JSONC/TOML comments, `--force` is also required to strip comments before merging (comments are not preserved on the round-trip). |
-| `--json` | Emit a JSON object keyed by client name with `status`, `config_path`, and `message` fields. |
+| `--json` | Emit a JSON object keyed by client name with `status`, `config_path`, `message`, and (dry-run) `entry` fields. |
+
+`flutree mcp uninstall [--client ...] [--scope ...] [--dry-run] [--json]` removes only the flutree entry and reports `removed`, `not_found` (client present, no flutree entry) or `not_installed`.
+
+`flutree mcp doctor [--scope ...] [--json]` reports the resolved binary (warning when it is a temp or `go run` path), per client whether it was detected, its config path, whether the flutree entry exists and whether its command is an existing executable, plus a live `mcp serve` initialize handshake (5s timeout). It prints `[OK]` / `[WARN]` / `[ERR]` lines and exits 1 when a command path is broken or the handshake fails.
 
 ### Per-client config file locations
 
-| Client | Config file |
-|--------|-------------|
-| Claude Code | `~/.claude.json` → `mcpServers.flutree` |
-| OpenCode | `~/.config/opencode/opencode.json` → `mcp.flutree` |
-| Codex | `~/.codex/config.toml` → `[mcp_servers.flutree]` |
+| Client | User scope | Project scope | Key |
+|--------|-----------|---------------|-----|
+| Claude Code | `~/.claude.json` | `.mcp.json` | `mcpServers.flutree` |
+| OpenCode | `~/.config/opencode/opencode.json` | `opencode.json` | `mcp.flutree` |
+| Codex | `~/.codex/config.toml` | `.codex/config.toml` | `[mcp_servers.flutree]` |
+| Cursor | `~/.cursor/mcp.json` | `.cursor/mcp.json` | `mcpServers.flutree` |
+| VS Code (Copilot) | `<VS Code user dir>/User/mcp.json` | `.vscode/mcp.json` | `servers.flutree` |
+| Gemini CLI | `~/.gemini/settings.json` | `.gemini/settings.json` | `mcpServers.flutree` |
+| Claude Desktop | macOS `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows `%APPDATA%\Claude\claude_desktop_config.json`, Linux `~/.config/Claude/claude_desktop_config.json` | not supported | `mcpServers.flutree` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | not supported | `mcpServers.flutree` |
 
-Detection: each client is considered present when its binary is on `PATH` **or** its config directory/file already exists.
+Detection never runs network calls: each client is considered present when its binary is on `PATH` **or** its config directory/file already exists.
 
 ### Manual configuration (unsupported clients)
 
-For clients not yet handled by `mcp install`, add the following stdio entry manually:
+For clients `mcp install` does not handle, add the following stdio entry manually:
 
 ```json
 {

@@ -106,3 +106,92 @@ func atomicWrite(path string, data []byte, perm os.FileMode) error {
 	}
 	return nil
 }
+
+// entryName is the key under which every client stores the flutree server.
+const entryName = "flutree"
+
+// jsonRemoveEntry deletes only root[key][flutree] from the JSON file at path,
+// preserving every other key and server. It returns OutcomeNotFound when the
+// file or entry does not exist, and never writes in that case.
+func jsonRemoveEntry(path, key string) (Outcome, error) {
+	root, err := loadJSONMap(path)
+	if err != nil {
+		return OutcomeError, err
+	}
+	servers, err := getOrCreateRawMap(root, key)
+	if err != nil {
+		return OutcomeError, err
+	}
+	if _, ok := servers[entryName]; !ok {
+		return OutcomeNotFound, nil
+	}
+	delete(servers, entryName)
+	raw, err := json.Marshal(servers)
+	if err != nil {
+		return OutcomeError, err
+	}
+	root[key] = json.RawMessage(raw)
+	if err := writeJSONMap(path, root); err != nil {
+		return OutcomeError, err
+	}
+	return OutcomeRemoved, nil
+}
+
+// jsonLookupCommand returns the command of root[key][flutree] in the JSON file.
+func jsonLookupCommand(path, key string) (string, bool, error) {
+	root, err := loadJSONMap(path)
+	if err != nil {
+		return "", false, err
+	}
+	servers, err := getOrCreateRawMap(root, key)
+	if err != nil {
+		return "", false, err
+	}
+	raw, ok := servers[entryName]
+	if !ok {
+		return "", false, nil
+	}
+	return commandOf(raw), true, nil
+}
+
+// commandOf extracts the executable from a server entry whose "command" is
+// either a string or an array whose first element is the executable.
+func commandOf(raw json.RawMessage) string {
+	var e struct {
+		Command json.RawMessage `json:"command"`
+	}
+	if json.Unmarshal(raw, &e) != nil {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(e.Command, &s) == nil {
+		return s
+	}
+	var arr []string
+	if json.Unmarshal(e.Command, &arr) == nil && len(arr) > 0 {
+		return arr[0]
+	}
+	return ""
+}
+
+// homeOf resolves the home directory, honoring an injected base for tests.
+func homeOf(baseDir string) (string, error) {
+	if baseDir != "" {
+		return baseDir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("could not determine home directory: %w", err)
+	}
+	return home, nil
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func previewJSON(entry any) (string, error) {
+	data, err := json.MarshalIndent(map[string]any{entryName: entry}, "", "  ")
+	return string(data), err
+}

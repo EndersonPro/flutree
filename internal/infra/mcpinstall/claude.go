@@ -13,6 +13,8 @@ import (
 type claudeMerger struct {
 	baseDir  string // injectable for tests; real callers pass os.UserHomeDir()
 	lookPath func(string) (string, error)
+	scope    Scope
+	cwd      string
 }
 
 // NewClaudeMerger returns a Merger for the Claude Code client.
@@ -21,6 +23,10 @@ type claudeMerger struct {
 // When baseDir is non-empty (test mode), binary detection via PATH is disabled
 // so tests don't depend on what is installed on the host machine.
 func NewClaudeMerger(baseDir string) Merger {
+	return newClaudeMerger(baseDir)
+}
+
+func newClaudeMerger(baseDir string) *claudeMerger {
 	lp := exec.LookPath
 	if baseDir != "" {
 		// In test mode, never find the binary via PATH so Detect is deterministic.
@@ -63,7 +69,7 @@ func (c *claudeMerger) Merge(absCmd string, force bool) (Outcome, error) {
 	if err != nil {
 		return OutcomeError, fmt.Errorf("claude-code: resolve home dir: %w", err)
 	}
-	path := filepath.Join(base, ".claude.json")
+	path := c.configFile(base)
 
 	// Load or initialize config as a map of raw JSON values so unrelated keys
 	// are preserved byte-for-byte.
@@ -130,7 +136,38 @@ func (c *claudeMerger) ConfigPath() string {
 	if err != nil {
 		return ""
 	}
+	return c.configFile(base)
+}
+
+// configFile is ~/.claude.json for user scope and <cwd>/.mcp.json for project
+// scope (https://code.claude.com/docs/en/mcp).
+func (c *claudeMerger) configFile(base string) string {
+	if c.scope == ScopeProject {
+		return filepath.Join(c.cwd, ".mcp.json")
+	}
 	return filepath.Join(base, ".claude.json")
+}
+
+func (c *claudeMerger) WithScope(scope Scope, cwd string) (Client, bool) {
+	cp := *c
+	cp.scope, cp.cwd = scope, cwd
+	return &cp, true
+}
+
+func (c *claudeMerger) Preview(absCmd string) (string, error) {
+	return previewJSON(claudeEntry{Type: "stdio", Command: absCmd, Args: []string{"mcp", "serve"}})
+}
+
+func (c *claudeMerger) Remove() (Outcome, error) {
+	out, err := jsonRemoveEntry(c.ConfigPath(), "mcpServers")
+	if err != nil {
+		return OutcomeError, fmt.Errorf("claude-code: %w", err)
+	}
+	return out, nil
+}
+
+func (c *claudeMerger) EntryCommand() (string, bool, error) {
+	return jsonLookupCommand(c.ConfigPath(), "mcpServers")
 }
 
 // claudeEntry is the JSON shape expected by Claude Code for a stdio MCP server.

@@ -17,6 +17,8 @@ import (
 type opencodeMerger struct {
 	baseDir  string // injectable for tests
 	lookPath func(string) (string, error)
+	scope    Scope
+	cwd      string
 }
 
 // NewOpenCodeMerger returns a Merger for the OpenCode client.
@@ -58,8 +60,7 @@ func (o *opencodeMerger) Merge(absCmd string, force bool) (Outcome, error) {
 	if err != nil {
 		return OutcomeError, fmt.Errorf("opencode: resolve home dir: %w", err)
 	}
-	configDir := filepath.Join(base, ".config", "opencode")
-	path := filepath.Join(configDir, "opencode.json")
+	path := o.configFile(base)
 
 	raw, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -146,7 +147,78 @@ func (o *opencodeMerger) ConfigPath() string {
 	if err != nil {
 		return ""
 	}
+	return o.configFile(base)
+}
+
+// configFile is ~/.config/opencode/opencode.json for user scope and
+// <cwd>/opencode.json for project scope.
+func (o *opencodeMerger) configFile(base string) string {
+	if o.scope == ScopeProject {
+		return filepath.Join(o.cwd, "opencode.json")
+	}
 	return filepath.Join(base, ".config", "opencode", "opencode.json")
+}
+
+func (o *opencodeMerger) WithScope(scope Scope, cwd string) (Client, bool) {
+	cp := *o
+	cp.scope, cp.cwd = scope, cwd
+	return &cp, true
+}
+
+func (o *opencodeMerger) Preview(absCmd string) (string, error) {
+	return previewJSON(openCodeEntry{Type: "local", Command: []string{absCmd, "mcp", "serve"}, Enabled: true})
+}
+
+// readStripped loads the config with JSONC comments removed (read-only use).
+func (o *opencodeMerger) readStripped() (map[string]json.RawMessage, []byte, error) {
+	raw, err := os.ReadFile(o.ConfigPath())
+	if errors.Is(err, fs.ErrNotExist) || (err == nil && len(raw) == 0) {
+		return map[string]json.RawMessage{}, raw, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(jsonc.ToJSONInPlace(append([]byte(nil), raw...)), &root); err != nil {
+		return nil, nil, fmt.Errorf("malformed JSON in %s: %w", filepath.Base(o.ConfigPath()), err)
+	}
+	return root, raw, nil
+}
+
+// Remove deletes only the flutree entry. A config containing JSONC comments is
+// refused (rewriting would drop them); remove the entry by hand in that case.
+func (o *opencodeMerger) Remove() (Outcome, error) {
+	root, raw, err := o.readStripped()
+	if err != nil {
+		return OutcomeError, fmt.Errorf("opencode: %w", err)
+	}
+	mcpMap, err := getOrCreateRawMap(root, "mcp")
+	if err != nil {
+		return OutcomeError, fmt.Errorf("opencode: mcp key: %w", err)
+	}
+	if _, ok := mcpMap[entryName]; !ok {
+		return OutcomeNotFound, nil
+	}
+	if string(jsonc.ToJSONInPlace(append([]byte(nil), raw...))) != string(raw) {
+		return OutcomeError, fmt.Errorf("opencode: config contains JSONC comments; remove the %q entry from %s by hand", entryName, o.ConfigPath())
+	}
+	return jsonRemoveEntry(o.ConfigPath(), "mcp")
+}
+
+func (o *opencodeMerger) EntryCommand() (string, bool, error) {
+	root, _, err := o.readStripped()
+	if err != nil {
+		return "", false, fmt.Errorf("opencode: %w", err)
+	}
+	mcpMap, err := getOrCreateRawMap(root, "mcp")
+	if err != nil {
+		return "", false, err
+	}
+	raw, ok := mcpMap[entryName]
+	if !ok {
+		return "", false, nil
+	}
+	return commandOf(raw), true, nil
 }
 
 // openCodeEntry is the JSON shape expected by OpenCode for a local MCP server.

@@ -18,7 +18,7 @@ func NewInstaller(mergers []Merger, resolver ExecResolverFunc) *Installer {
 	return &Installer{mergers: mergers, execResolver: resolver}
 }
 
-// DefaultInstaller returns an Installer pre-loaded with all three client mergers
+// DefaultInstaller returns an Installer pre-loaded with every client merger
 // and the real binary resolver. Use this in the CLI dispatch layer.
 func DefaultInstaller() *Installer {
 	home := "" // empty → real home dir
@@ -27,45 +27,125 @@ func DefaultInstaller() *Installer {
 			NewClaudeMerger(home),
 			NewOpenCodeMerger(home),
 			NewCodexMerger(home),
+			NewCursorMerger(home),
+			NewVSCodeMerger(home),
+			NewGeminiMerger(home),
+			NewClaudeDesktopMerger(home),
+			NewWindsurfMerger(home),
 		},
 		RealExecResolver(),
 	)
 }
 
-// Run iterates the configured mergers, applies the client filter, and returns
-// one InstallResult per targeted client.
-//
-// clients is an optional list of client names to restrict the run. If empty,
-// all mergers are considered. An unknown name causes an immediate error before
-// any write.
-//
-// force is passed through to each Merger.Merge call.
+// Run installs with default options (user scope, no dry run). It is kept for
+// callers that only need a client filter and the force flag.
 func (inst *Installer) Run(clients []string, force bool) ([]InstallResult, error) {
-	// Validate filter list before any I/O.
-	if err := inst.validateFilter(clients); err != nil {
+	return inst.Install(Options{Clients: clients, Force: force})
+}
+
+// Install iterates the targeted mergers and returns one InstallResult per
+// client. An unknown client name fails before any write. With DryRun nothing
+// is written: Status is the outcome that would happen and Entry holds the
+// exact entry.
+func (inst *Installer) Install(opts Options) ([]InstallResult, error) {
+	if err := inst.validateFilter(opts.Clients); err != nil {
 		return nil, err
 	}
-
 	absCmd, err := inst.execResolver()
 	if err != nil {
 		return nil, fmt.Errorf("resolve binary path: %w", err)
 	}
+	return inst.each(opts, func(m Merger) InstallResult {
+		res := InstallResult{Client: m.Name(), DryRun: opts.DryRun}
+		c, isClient := m.(Client)
+		if isClient && opts.DryRun {
+			return dryInstall(c, absCmd, opts.Force, res)
+		}
+		outcome, mergeErr := m.Merge(absCmd, opts.Force)
+		res.Status = outcome
+		if mergeErr != nil {
+			res.Message = mergeErr.Error()
+		}
+		if cp, ok := m.(MergerWithConfigPath); ok {
+			res.ConfigPath = cp.ConfigPath()
+		}
+		return res
+	})
+}
 
+func dryInstall(c Client, absCmd string, force bool, res InstallResult) InstallResult {
+	res.ConfigPath = c.ConfigPath()
+	entry, err := c.Preview(absCmd)
+	if err != nil {
+		res.Status, res.Message = OutcomeError, err.Error()
+		return res
+	}
+	res.Entry = entry
+	res.Status = OutcomeConfigured
+	if !force {
+		if _, found, err := c.EntryCommand(); err == nil && found {
+			res.Status = OutcomeAlreadyExists
+		}
+	}
+	return res
+}
+
+// Uninstall removes only the flutree entry from each targeted, detected client.
+// With DryRun nothing is written: Status is removed or not_found.
+func (inst *Installer) Uninstall(opts Options) ([]InstallResult, error) {
+	if err := inst.validateFilter(opts.Clients); err != nil {
+		return nil, err
+	}
+	return inst.each(opts, func(m Merger) InstallResult {
+		res := InstallResult{Client: m.Name(), DryRun: opts.DryRun}
+		c, ok := m.(Client)
+		if !ok {
+			res.Status, res.Message = OutcomeError, "client does not support uninstall"
+			return res
+		}
+		res.ConfigPath = c.ConfigPath()
+		if opts.DryRun {
+			if _, found, err := c.EntryCommand(); err != nil {
+				res.Status, res.Message = OutcomeError, err.Error()
+			} else if found {
+				res.Status = OutcomeRemoved
+			} else {
+				res.Status = OutcomeNotFound
+			}
+			return res
+		}
+		out, err := c.Remove()
+		res.Status = out
+		if err != nil {
+			res.Message = err.Error()
+		}
+		return res
+	})
+}
+
+// each applies scope handling and detection, then calls fn for targeted
+// clients that are detected and support the scope.
+func (inst *Installer) each(opts Options, fn func(Merger) InstallResult) ([]InstallResult, error) {
 	var results []InstallResult
 	for _, m := range inst.mergers {
-		if !inst.isTargeted(m.Name(), clients) {
+		if !inst.isTargeted(m.Name(), opts.Clients) {
+			continue
+		}
+		if c, ok := m.(Client); ok {
+			scoped, supported := c.WithScope(opts.Scope, opts.Cwd)
+			if !supported {
+				results = append(results, unsupportedScope(m.Name(), opts.Scope))
+				continue
+			}
+			m = scoped
+		} else if opts.Scope == ScopeProject {
+			results = append(results, unsupportedScope(m.Name(), opts.Scope))
 			continue
 		}
 
 		detected, detectErr := m.Detect()
 		if detectErr != nil {
-			// I/O error during detection — surface as OutcomeError so the
-			// caller knows something went wrong rather than silently skipping.
-			results = append(results, InstallResult{
-				Client:  m.Name(),
-				Status:  OutcomeError,
-				Message: detectErr.Error(),
-			})
+			results = append(results, InstallResult{Client: m.Name(), Status: OutcomeError, Message: detectErr.Error()})
 			continue
 		}
 		if !detected {
@@ -76,22 +156,69 @@ func (inst *Installer) Run(clients []string, force bool) ([]InstallResult, error
 			})
 			continue
 		}
-
-		outcome, mergeErr := m.Merge(absCmd, force)
-		result := InstallResult{
-			Client: m.Name(),
-			Status: outcome,
-		}
-		if mergeErr != nil {
-			result.Message = mergeErr.Error()
-		}
-		// Attach config path if the merger exposes it.
-		if cp, ok := m.(MergerWithConfigPath); ok {
-			result.ConfigPath = cp.ConfigPath()
-		}
-		results = append(results, result)
+		results = append(results, fn(m))
 	}
 	return results, nil
+}
+
+func unsupportedScope(name string, scope Scope) InstallResult {
+	return InstallResult{
+		Client:  name,
+		Status:  OutcomeUnsupportedScope,
+		Message: fmt.Sprintf("%s has no %s-scope config", name, scope),
+	}
+}
+
+// ClientCheck is the doctor report for one client.
+type ClientCheck struct {
+	Client       string `json:"client"`
+	Detected     bool   `json:"detected"`
+	ConfigPath   string `json:"config_path,omitempty"`
+	EntryPresent bool   `json:"entry_present"`
+	Command      string `json:"command,omitempty"`
+	CommandOK    bool   `json:"command_ok"`
+	Message      string `json:"message,omitempty"`
+}
+
+// Diagnose inspects each targeted client without writing anything.
+func (inst *Installer) Diagnose(opts Options) ([]ClientCheck, error) {
+	if err := inst.validateFilter(opts.Clients); err != nil {
+		return nil, err
+	}
+	var checks []ClientCheck
+	for _, m := range inst.mergers {
+		if !inst.isTargeted(m.Name(), opts.Clients) {
+			continue
+		}
+		chk := ClientCheck{Client: m.Name()}
+		c, ok := m.(Client)
+		if ok {
+			c, ok = c.WithScope(opts.Scope, opts.Cwd)
+		}
+		if !ok {
+			chk.Message = fmt.Sprintf("no %s-scope config", opts.Scope)
+			checks = append(checks, chk)
+			continue
+		}
+		detected, err := c.Detect()
+		if err != nil {
+			chk.Message = err.Error()
+			checks = append(checks, chk)
+			continue
+		}
+		chk.Detected = detected
+		chk.ConfigPath = c.ConfigPath()
+		cmd, found, err := c.EntryCommand()
+		switch {
+		case err != nil:
+			chk.Message = err.Error()
+		case found:
+			chk.EntryPresent, chk.Command = true, cmd
+			chk.CommandOK = commandExecutable(cmd)
+		}
+		checks = append(checks, chk)
+	}
+	return checks, nil
 }
 
 // ValidateClients checks that every name in clients is a known merger name.
