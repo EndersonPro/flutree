@@ -350,11 +350,14 @@ func deriveGraphOverrides(rootWorktree, rootSource string, packages []domain.Pla
 		if fromSource {
 			pubspecDir = repo.source
 		}
+		// Only the package being resolved (repos[0]) contributes its
+		// dev_dependencies: pub ignores a dependency's dev dependencies, so a
+		// member's dev-only path dependency must not become an override.
 		sections := []string{"dependencies", "dev_dependencies"}
 		if i > 0 {
 			// Only the root package's own overrides apply; a package's are
 			// ignored by pub, so they are carried as plain path dependencies.
-			sections = append(sections, "dependency_overrides")
+			sections = []string{"dependencies", "dependency_overrides"}
 		}
 		for _, section := range sections {
 			deps, err := readPubspecSection(filepath.Join(pubspecDir, "pubspec.yaml"), section)

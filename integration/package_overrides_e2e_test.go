@@ -359,3 +359,35 @@ func TestE2EMCPPlanCreateAndStatusCoverPackageOverrides(t *testing.T) {
 		t.Errorf("pkg-b entries must list pkg_a: %v", byName["pkg-b"])
 	}
 }
+
+// Pub ignores a dependency's dev_dependencies, so a transitive member's
+// dev-only path dependency must not become an override in another package's
+// file or in the root file. The package itself still gets it.
+func TestE2EPackageOverridesIgnoreTransitiveDevDependencies(t *testing.T) {
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "ws")
+	writeDartPackage(t, filepath.Join(scope, "helper"), "test_helper", "String h() => 'h';\n")
+	initRepoWithPubspec(t, filepath.Join(scope, "pkg-b"), "pkg_b",
+		"environment:\n  sdk: ^3.0.0\ndev_dependencies:\n  test_helper:\n    path: ../helper\n")
+	initRepoWithPubspec(t, filepath.Join(scope, "pkg-c"), "pkg_c",
+		"environment:\n  sdk: ^3.0.0\ndependencies:\n  pkg_b:\n    path: ../pkg-b\n")
+	root := filepath.Join(scope, "app")
+	initRepoWithPubspec(t, root, "app", "environment:\n  sdk: ^3.0.0\ndependencies:\n  pkg_c:\n    path: ../pkg-c\n")
+
+	runE2E(t, root, testEnv(home), "create", "devdeps", "--scope", scope, "--root-repo", "app",
+		"--package", "pkg-b", "--package-base", "pkg-b=main",
+		"--package", "pkg-c", "--package-base", "pkg-c=main",
+		"--yes", "--non-interactive").requireCode(t, 0)
+
+	base := filepath.Join(home, "Documents", "worktrees", "devdeps")
+	if _, ok := readOverrides(t, filepath.Join(base, "packages", "pkg-c"))["test_helper"]; ok {
+		t.Errorf("pkg-c must not override pkg_b's dev-only dependency test_helper")
+	}
+	if _, ok := readOverrides(t, filepath.Join(base, "root", "app"))["test_helper"]; ok {
+		t.Errorf("the root must not override pkg_b's dev-only dependency test_helper")
+	}
+	bWT := filepath.Join(base, "packages", "pkg-b")
+	if target := overridePathTarget(t, bWT, readOverrides(t, bWT)["test_helper"]); target != filepath.Join(scope, "helper") {
+		t.Errorf("pkg-b's own dev dependency must still resolve to %s, got %s", filepath.Join(scope, "helper"), target)
+	}
+}
