@@ -16,7 +16,7 @@ Branch: `feat/mcp-ai-native` (stacked on `feat/create-scope-navigator`) · Deliv
 | --- | --- | --- | --- | --- |
 | T1 | S2, S3, S6 | delegated writer A (parallel unit; owns internal/infra/mcp, cmd/flutree/mcp.go) | done | 28df326 |
 | T2 | S5, S6 | delegated writer B (parallel unit; owns internal/infra/mcpinstall, cmd/flutree/mcp_install.go) | done | 305a0b8 |
-| T3 | S4, S6 | delegated writer after T1 (same files as T1) | in progress | — |
+| T3 | S4, S6 | delegated writer after T1 (same files as T1) | done | (T3 commit) |
 
 ## Log
 
@@ -26,3 +26,4 @@ Branch: `feat/mcp-ai-native` (stacked on `feat/create-scope-navigator`) · Deliv
 - L4 T1 (writer A): 15 tools (9 original kept + discover_repos, inspect_repo, list_branches, plan_create, create_workspace, workspace_status), 4 resources, instructions; RED 11 new tests → GREEN; `requiresConfirmation` is the single confirmation gate for T3. Limitation: workspace_status has no ahead/behind (registry does not store each worktree's base).
 - L5 T2 (writer B): Cursor, VS Code, Gemini (`gemini`), Claude Desktop, Windsurf mergers + `--scope`, `--dry-run`, `mcp uninstall`, `mcp doctor`. Sources cited per merger; Windsurf path unverified (docs moved), VS Code per-OS profile path assumed.
 - L6 Parent integration: registered uninstall/doctor in cmd/flutree/mcp.go, extended the exact tools/list contract test to 15 names, removed a stray binary `cmd/flutree/flutree` a writer built. `go test ./...` 11 ok, 41 MCP tests, e2e gate ok. Live scratch run: dry-run writes nothing, install keeps other servers, doctor `[OK]` entries + handshake, uninstall removes only flutree. Open: OpenCode docs now say servers go under `mcp.servers.<name>` ("V2 does not place server names directly under mcp"), the installer writes `mcp.<name>`; doctor prints "no flutree entry" WARN for clients that are not installed.
+- L7 T3 (writer, sonnet): elicitation (2 min timeout) for missing base_branch/packages and before create_workspace without confirm, complete_worktree (always when the client can elicit) and pubget force; decline/cancel/timeout return `user_declined` and execute nothing; fallback `needs_user_input` + questions; prompts create_workspace_flow, add_package_flow, finish_workspace_flow. RED 11 → GREEN. Writer updated 2 unit tests that encoded unconfirmed deletes; parent added `"confirm": true` to integration/mcp_e2e_test.go:98 (same reason). `go test ./...` 11 ok, 54 MCP tests, e2e gate ok. Contract change (requested by S4): complete_worktree / pubget force now need confirmation.

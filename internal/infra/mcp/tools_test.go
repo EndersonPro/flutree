@@ -499,7 +499,7 @@ func TestCompleteWorktree_HappyPath(t *testing.T) {
 	}
 	svc := MCPServices{Complete: fake}
 	handler := makeCompleteWorktreeHandler(svc)
-	result, err := handler(context.Background(), makeRequest(map[string]any{"name": "wt1"}))
+	result, err := handler(context.Background(), makeRequest(map[string]any{"name": "wt1", "confirm": true}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -520,7 +520,7 @@ func TestCompleteWorktree_NonExistentName(t *testing.T) {
 	}
 	svc := MCPServices{Complete: fake}
 	handler := makeCompleteWorktreeHandler(svc)
-	result, err := handler(context.Background(), makeRequest(map[string]any{"name": "ghost"}))
+	result, err := handler(context.Background(), makeRequest(map[string]any{"name": "ghost", "confirm": true}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

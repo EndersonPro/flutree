@@ -301,8 +301,12 @@ func allPathSelectors(selectors []string) bool {
 }
 
 func makePlanCreateHandler(svc MCPServices) toolHandler {
-	return func(_ context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	return func(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 		return withPanicRecovery(func() (*mcpCallToolResult, error) {
+			req, declined := elicitCreateInputs(ctx, svc, req, map[string]any{"planned": false})
+			if declined != nil {
+				return declined, nil
+			}
 			input, bad := buildCreateInput(svc, req)
 			if bad != nil {
 				return bad, nil
@@ -316,16 +320,32 @@ func makePlanCreateHandler(svc MCPServices) toolHandler {
 	}
 }
 
-// requiresConfirmation is the single place that decides whether create_workspace
-// must stop and ask before changing anything. Today the agent's confirm flag is
-// the only gate; user elicitation plugs in here.
-func requiresConfirmation(req mcplib.CallToolRequest) bool {
-	return !req.GetBool("confirm", false)
+// describePlanForUser renders what create_workspace will create, for the
+// confirmation question.
+func describePlanForUser(v planView) string {
+	var b strings.Builder
+	b.WriteString("Create workspace '" + v.Name + "' in " + v.ContainerPath + "?\n")
+	b.WriteString("- root: " + v.Root.Path + " (new branch " + v.Root.Branch + " from " + v.Root.BaseBranch + ")\n")
+	for _, pkg := range v.Packages {
+		b.WriteString("- package: " + pkg.Path + " (new branch " + pkg.Branch + " from " + pkg.BaseBranch + ")\n")
+	}
+	if v.OverridePath != "" {
+		b.WriteString("- generated: " + v.OverridePath + "\n")
+	}
+	if v.WorkspaceFile != "" {
+		b.WriteString("- generated: " + v.WorkspaceFile + "\n")
+	}
+	b.WriteString("Nothing existing is deleted; the original repositories only gain the new branches and worktree entries.")
+	return b.String()
 }
 
 func makeCreateWorkspaceHandler(svc MCPServices) toolHandler {
-	return func(_ context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	return func(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 		return withPanicRecovery(func() (*mcpCallToolResult, error) {
+			req, declined := elicitCreateInputs(ctx, svc, req, map[string]any{"created": false})
+			if declined != nil {
+				return declined, nil
+			}
 			input, bad := buildCreateInput(svc, req)
 			if bad != nil {
 				return bad, nil
@@ -335,13 +355,13 @@ func makeCreateWorkspaceHandler(svc MCPServices) toolHandler {
 				return toToolError(err), nil
 			}
 			view := toPlanView(plan)
-			if requiresConfirmation(req) {
-				return marshalStructured(map[string]any{
-					"created": false,
-					"status":  "confirmation_required",
-					"message": "Nothing was created. Show this plan to the user and, only after they explicitly approve it, call create_workspace again with the same arguments and confirm=true.",
-					"plan":    view,
-				})
+			instruction := "Nothing was created. Show this plan to the user and ask them to approve it. Only after they explicitly say yes, call create_workspace again with the same arguments and confirm=true."
+			if res, ok := requiresConfirmation(ctx, req, confirmSpec{
+				Message:     describePlanForUser(view),
+				Pending:     map[string]any{"created": false, "status": "confirmation_required", "plan": view},
+				Instruction: instruction,
+			}); !ok {
+				return res, nil
 			}
 			result, err := svc.Create.Apply(plan, domain.CreateApplyOptions{
 				NonInteractive:      true,

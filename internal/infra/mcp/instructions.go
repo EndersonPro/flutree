@@ -28,9 +28,15 @@ RECOMMENDED FLOW
 7. Verify and prepare: workspace_status(name) for paths, branches, dirty state and overrides; pubget(name) to run pub get (packages first, then root).
 8. Later: add_repo adds repositories to an existing workspace; complete_worktree(name) removes the worktrees (the local branches stay).
 
+ASKING THE USER
+- If the client supports elicitation, plan_create and create_workspace ask the user directly for a missing base_branch, the packages (when you omit the argument) and each package's base branch, and create_workspace, complete_worktree and force=true on pubget ask a yes/no question before acting. A decline or cancel comes back as a normal result with status declined_by_user or cancelled_by_user and user_declined=true: nothing was executed, so do not retry on your own.
+- If the client cannot elicit, the same tools return a normal result with needs_user_input=true, a questions list (field, prompt, type, options) and an instruction, and execute nothing. Ask the user those questions and call the tool again with the answers or confirm=true.
+- complete_worktree always asks the user when the client can elicit, even with confirm=true. Without elicitation it needs confirm=true after you asked the user.
+- Prompts: create_workspace_flow(name?, root_path?), add_package_flow(workspace) and finish_workspace_flow(workspace) give you the full step-by-step conversation for the three main flows.
+
 RULES
 - Paths in results are absolute. Repo selectors accept a repo folder name, a package name or a path (absolute, ~ or relative to the server's cwd); a path may be outside scope.
-- complete_worktree is destructive: it removes every worktree of the workspace and refuses dirty ones unless force=true. Check workspace_status first and ask the user before using force.
+- complete_worktree is destructive: it removes every worktree of the workspace and refuses dirty ones unless force=true. Check workspace_status first and ask the user before using force; it needs confirm=true (after you asked the user) when the client cannot elicit.
 - create_worktree is the older one-shot create (no confirmation step); prefer plan_create + create_workspace.
 - Errors are tool results with isError=true and a JSON body {category, message, hint, code}. Follow the hint; categories are input, precondition, git, persistence and unexpected.
 `

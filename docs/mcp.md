@@ -12,6 +12,8 @@ stdout is the JSON-RPC transport: `--json` is rejected and nothing else is writt
 | --- | --- |
 | `instructions` | A ~45 line summary of the model and the recommended flow, sent in the `initialize` result. |
 | Resources | `flutree://guide`, `flutree://workspaces`, `flutree://config` and the template `flutree://workspace/{name}`. |
+| Prompts | `create_workspace_flow(name?, root_path?)`, `add_package_flow(workspace)`, `finish_workspace_flow(workspace)`. |
+| Elicitation | Asks the user directly when the client declares the `elicitation` capability; see [Asking the user](#asking-the-user). |
 | Tools | 15 tools: 9 original ones plus `discover_repos`, `inspect_repo`, `list_branches`, `plan_create`, `create_workspace`, `workspace_status`. |
 
 Tool results are JSON in a text content block. The new tools also return the same object as
@@ -28,6 +30,54 @@ Tool results are JSON in a text content block. The new tools also return the sam
 5. After an explicit yes, `create_workspace(..., confirm=true)`.
 6. `workspace_status(name)` and `pubget(name)`.
 7. `add_repo` to attach more repositories; `complete_worktree` when the work is done.
+
+## Asking the user
+
+Two kinds of decisions belong to the user, never to the agent: inputs the agent does not have
+(base branch, packages) and approval before state-changing actions.
+
+| Where | What is asked |
+| --- | --- |
+| `plan_create`, `create_workspace` | A missing `base_branch` (a string field; the repo's local and `origin/*` branches become an `enum`, the current branch the default). `packages` when the argument is omitted (the repos discovered near the root, except the root). A base branch for each package without one in `package_base`. |
+| `create_workspace` without `confirm=true` | A yes/no confirmation that lists the root and package worktrees, branches and generated files. |
+| `complete_worktree` | Always (even with `confirm=true`): a yes/no confirmation that lists every worktree folder to delete and the branches that are kept, marking dirty worktrees. |
+| `pubget` with `force=true` | A yes/no confirmation. A plain `pubget` is not gated. |
+
+The confirmation gate is one function, `requiresConfirmation`, shared by all of them.
+
+**Client with elicitation.** The server sends `elicitation/create` with a form schema and waits up
+to 2 minutes. `accept` with data continues. `decline`, `cancel`, a timeout or `accept` with
+`confirm=false` return a normal result (not an error) with `user_declined: true`,
+`status: "declined_by_user"` or `"cancelled_by_user"` and `message: "... Nothing was executed ..."`;
+the agent must not retry on its own. For `create_workspace`/`plan_create` the form questions are
+only asked for what is missing, and `confirm=true` from the agent skips the create confirmation
+when every input is present.
+
+**Client without elicitation.** Nothing is executed. Missing inputs stay input errors with a hint
+(unchanged). A missing confirmation returns a normal result:
+
+```json
+{
+  "created": false,
+  "status": "confirmation_required",
+  "needs_user_input": true,
+  "questions": [{"field": "confirm", "type": "boolean", "prompt": "Create workspace 'x' ...?"}],
+  "instruction": "Nothing was created. Show this plan to the user ... call create_workspace again with the same arguments and confirm=true.",
+  "plan": {}
+}
+```
+
+`questions[]` entries have `field`, `prompt`, `type` and, when known, `options`. The agent asks the
+user and calls the tool again with the answers or `confirm=true`. `complete_worktree` accepts
+`confirm=true` for this path (it returns `completed: false`; `pubget` returns `executed: false`).
+
+## Prompts
+
+| Prompt | Arguments | Steps |
+| --- | --- | --- |
+| `create_workspace_flow` | `name?`, `root_path?` | `list_worktrees`, `get_config`, `discover_repos`, `inspect_repo`, ask the user (name, root, packages, base branches via `list_branches`), `plan_create`, show the plan, `create_workspace(confirm=true)`, `workspace_status`, `pubget`. |
+| `add_package_flow` | `workspace` (required) | `workspace_status`, `discover_repos`, ask which repos and base branches, `add_repo`, `workspace_status`, `pubget`. |
+| `finish_workspace_flow` | `workspace` (required) | `workspace_status`, flag dirty worktrees, ask for approval, `complete_worktree`, `list_worktrees`. |
 
 ## Resources
 
@@ -110,15 +160,15 @@ Read-only state of one workspace.
 
 ### Existing tools
 
-Names and arguments are unchanged; descriptions now say when to use them.
+Names and arguments are unchanged apart from the new optional `confirm` on `complete_worktree` and `pubget`; descriptions now say when to use them.
 
 | Tool | Notes |
 | --- | --- |
 | `list_worktrees` | `show_all`, `global_scope`. Read-only. |
 | `create_worktree` | Legacy one-shot create without a confirmation step; prefer `plan_create` + `create_workspace`. |
 | `add_repo` | `workspace_name`, `repos`, `scope`, `package_branch_source`, `package_base`, `sync_policy`, `reuse_existing_branch`, `copy_root_files`. |
-| `complete_worktree` | Destructive: removes the worktrees (branches stay). Refuses dirty worktrees unless `force`. Check `workspace_status` first. |
-| `pubget` | `name`, `force`. |
+| `complete_worktree` | Destructive: removes the worktrees (branches stay). Refuses dirty worktrees unless `force`. Asks the user first (elicitation), or needs `confirm=true` after the agent asked. Check `workspace_status` first. |
+| `pubget` | `name`, `force`, `confirm` (only needed with `force=true`). |
 | `clean_worktree` | Acts on the managed worktree containing the server's working directory. |
 | `get_config` / `set_config` | Keys `scope.root`, `workspace.generate`, `sdk.manager`. |
 | `get_version` | Binary version. |

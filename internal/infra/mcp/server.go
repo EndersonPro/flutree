@@ -105,6 +105,8 @@ func BuildServer(version string, services MCPServices) (*mcpserver.MCPServer, er
 	s := mcpserver.NewMCPServer("flutree", version,
 		mcpserver.WithInstructions(serverInstructions),
 		mcpserver.WithResourceCapabilities(false, false),
+		mcpserver.WithPromptCapabilities(false),
+		mcpserver.WithElicitation(),
 	)
 
 	s.AddTool(buildListWorktreesTool(), makeListWorktreesHandler(services))
@@ -125,6 +127,7 @@ func BuildServer(version string, services MCPServices) (*mcpserver.MCPServer, er
 	s.AddTool(buildWorkspaceStatusTool(), makeWorkspaceStatusHandler(services))
 
 	registerResources(s, services)
+	registerPrompts(s)
 
 	return s, nil
 }
@@ -188,7 +191,7 @@ func buildAddRepoTool() mcplib.Tool {
 // buildCompleteWorktreeTool defines the tool schema for complete_worktree.
 func buildCompleteWorktreeTool() mcplib.Tool {
 	return mcplib.NewTool("complete_worktree",
-		mcplib.WithDescription("DESTRUCTIVE: finish a workspace by removing its root and package worktrees from disk and marking it completed in the registry. Local branches are kept. Use it only when the user says the work is done. It refuses worktrees with uncommitted changes unless force=true: call workspace_status first, show the user what is dirty and ask before forcing."),
+		mcplib.WithDescription("DESTRUCTIVE, needs the user's approval: finish a workspace by removing its root and package worktrees from disk and marking it completed in the registry. Local branches are kept. Use it only when the user says the work is done. It refuses worktrees with uncommitted changes unless force=true: call workspace_status first, show the user what is dirty and ask before forcing."),
 		mcplib.WithString("name", mcplib.Required(), mcplib.Description("Workspace name, as shown by list_worktrees.")),
 		mcplib.WithBoolean("force", mcplib.Description("Force removal even if the worktree is dirty.")),
 	)

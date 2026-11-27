@@ -95,7 +95,7 @@ func TestE2EMCPCreateAndCompleteWorktree(t *testing.T) {
 		t.Fatalf("after create_worktree, list = %+v", rows)
 	}
 
-	completed := callMCPTool(t, t.TempDir(), env, "complete_worktree", map[string]any{"name": "feature-mcp", "force": true})
+	completed := callMCPTool(t, t.TempDir(), env, "complete_worktree", map[string]any{"name": "feature-mcp", "force": true, "confirm": true})
 	if completed.IsError {
 		t.Fatalf("complete_worktree failed: %s", completed.text(t))
 	}
