@@ -10,6 +10,9 @@ Branch: `feat/mcp-ai-native` (stacked on `feat/create-scope-navigator`) · Deliv
 - S5 (phase 4, install) — More clients: Cursor, VS Code (Copilot), Gemini CLI, Claude Desktop, Windsurf, besides Claude Code, OpenCode and Codex; `--scope project|user`; `--dry-run`; `flutree mcp uninstall`; `flutree mcp doctor` (binary path, config entry per client, server handshake).
 - S6 — Every phase is covered by e2e tests through the real binary (JSON-RPC over stdio; a simulated client answers elicitation). Docs: `docs/mcp.md` for the server, README install section.
 
+- S7 — User: "Primero ajustemos los pendientes y después push a main y sacamos release de todos los cambios que tenemos hasta ahora". Pendings: (a) OpenCode current docs place servers under `mcp.servers.<name>` ("V2 does not place server names directly under mcp") while flutree writes `mcp.<name>` — write the layout the user's OpenCode reads, keep reading/removing both; (b) confirm Windsurf and VS Code config paths against official docs; (c) VS Code JSONC configs (comments/trailing commas) must not break install/uninstall/doctor; (d) doctor must not print WARN noise for clients that simply have no flutree entry; (e) `workspace_status` reports ahead/behind versus each worktree's base: store the base branch in the registry as an optional field (old records without it keep working and omit ahead/behind).
+- S8 — After S7: merge all four branches to main, push, and publish the release with release-please + goreleaser.
+
 ## Tasks
 
 | ID | Specs | Route | Status | Commit |
@@ -17,6 +20,9 @@ Branch: `feat/mcp-ai-native` (stacked on `feat/create-scope-navigator`) · Deliv
 | T1 | S2, S3, S6 | delegated writer A (parallel unit; owns internal/infra/mcp, cmd/flutree/mcp.go) | done | 28df326 |
 | T2 | S5, S6 | delegated writer B (parallel unit; owns internal/infra/mcpinstall, cmd/flutree/mcp_install.go) | done | 305a0b8 |
 | T3 | S4, S6 | delegated writer after T1 (same files as T1) | done | b7ea3c8 |
+| T4 | S7 a–d | delegated writer A (parallel; owns internal/infra/mcpinstall, cmd/flutree/mcp_*.go) | in progress | — |
+| T5 | S7 e | delegated writer B (parallel; owns registry/app/mcp tools) | in progress | — |
+| T6 | S8 | parent (git, push, release) | pending | — |
 
 ## Log
 
@@ -28,3 +34,4 @@ Branch: `feat/mcp-ai-native` (stacked on `feat/create-scope-navigator`) · Deliv
 - L6 Parent integration: registered uninstall/doctor in cmd/flutree/mcp.go, extended the exact tools/list contract test to 15 names, removed a stray binary `cmd/flutree/flutree` a writer built. `go test ./...` 11 ok, 41 MCP tests, e2e gate ok. Live scratch run: dry-run writes nothing, install keeps other servers, doctor `[OK]` entries + handshake, uninstall removes only flutree. Open: OpenCode docs now say servers go under `mcp.servers.<name>` ("V2 does not place server names directly under mcp"), the installer writes `mcp.<name>`; doctor prints "no flutree entry" WARN for clients that are not installed.
 - L7 T3 (writer, sonnet): elicitation (2 min timeout) for missing base_branch/packages and before create_workspace without confirm, complete_worktree (always when the client can elicit) and pubget force; decline/cancel/timeout return `user_declined` and execute nothing; fallback `needs_user_input` + questions; prompts create_workspace_flow, add_package_flow, finish_workspace_flow. RED 11 → GREEN. Writer updated 2 unit tests that encoded unconfirmed deletes; parent added `"confirm": true` to integration/mcp_e2e_test.go:98 (same reason). `go test ./...` 11 ok, 54 MCP tests, e2e gate ok. Contract change (requested by S4): complete_worktree / pubget force now need confirmation.
 - L8 Native review split in three (5245 lines in one slice): 4e50edb..305a0b8 installer, 305a0b8..28df326 server, 28df326..HEAD elicitation — all granted, approved, acknowledged. Parent fixes from the advisory notes: install --dry-run could reach Merge (write) for a non-previewable merger; doctor exited 0 on an unreadable detected config (b04491d, RED→GREEN); an elicitation "accept" without `confirm` proceeded — now fails closed (RED→GREEN, new subtest). Checked and left as is: unsupported scope does not fail doctor (Detected=false). Open: OpenCode V2 `mcp.servers.<name>` layout; Windsurf/VS Code paths not confirmed by official docs; doctor WARN noise for clients without entries; workspace_status has no ahead/behind; VS Code JSONC configs are not parsed.
+- L9 (2026-11-27, user): "Primero ajustemos los pendientes y después push a main y sacamos release de todos los cambios que tenemos hasta ahora"
