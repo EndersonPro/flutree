@@ -16,7 +16,7 @@ Branch: `feat/e2e-suite` (stacked on `feat/cobra-migration`) · Delivery: `ask-o
 | --- | --- | --- | --- | --- |
 | T1 | S1, S2 | inline | done | 6d110e4, 7e32ef0 |
 | T2 | S3 | inline | done | 9fa5443 |
-| T3 | S5, S6 | inline | in progress | — |
+| T3 | S5, S6 | inline | done | cbad141 + correction |
 
 ## Log
 
@@ -35,3 +35,4 @@ Branch: `feat/e2e-suite` (stacked on `feat/cobra-migration`) · Delivery: `ask-o
 - L8 (2026-11-26, user): "Cuando creo un pubspec_override este no está teniendo en cuenta los overrides que ya existen en el pubspec principal, los ignora, debe tenerlos en cuenta al momento de crear el grafo de dependencias entre multirepos además de que necesito que agreguemos una prueba real o realizar pruebas de que el multirepo funcione"
 - L9 Evidence: Dart 3.14 test — a `pubspec_overrides.yaml` replaces (does not merge) `pubspec.yaml` `dependency_overrides`. flutree today migrates only `path:` overrides and copies relative paths verbatim: reproduced `intl: 0.19.0` and a `git:` override dropped, `shared: path: ../shared` left pointing at `<worktrees>/w1/root/shared`. Fix uses gopkg.in/yaml.v3 (already in go.sum) instead of line parsing.
 - L10 T3: RED — TestE2ECreateCarriesRootPubspecDependencyOverrides / TestE2EAddRepoCarries... (intl and git overrides dropped, shared path wrong) and TestE2ERealDartResolvesMultiRepoWorkspace (dart: "could not find package shared at \"../shared-fork\""). GREEN — override logic moved to internal/app/pubspec_overrides.go on yaml.v3: carries every override shape, rebases relative paths from the source repo to the worktree, precedence package worktrees > existing pubspec_overrides.yaml > pubspec.yaml. Real Dart test runs (not skipped) and passes. Removed 4 unit tests of the deleted line parser (behavior now covered end-to-end). `go test ./...` and scripts/e2e.sh green. Risk: item 5 (gopkg.in/yaml.v3 becomes a direct dependency).
+- L11 Verification of cbad141 (independent verifier): S6 pass; S5 partial. Blocker: in-repo path overrides (`path: packages/local`) were rebased to the source checkout, so the worktree copy was ignored (real dart printed `source-checkout`). Correction: keep paths that stay inside the source repo; surface the YAML parse cause in the error hint. RED → GREEN on TestE2EInRepoPathOverrideStaysInsideWorktree (real dart prints `worktree-copy`) and TestE2EMalformedRootPubspecReportsParseError; TestE2EAddRepoTwiceKeepsRebasedOverrides pins idempotence. Known, not fixed: a failed create leaves an empty container dir and branch behind (pre-existing rollback gap); plain `dependencies: path:` siblings are not rewritten (pre-existing).

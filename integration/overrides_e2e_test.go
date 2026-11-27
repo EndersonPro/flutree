@@ -227,3 +227,73 @@ func createWorkspaceWithRootPubspec(t *testing.T, name string, packages []string
 	}
 	return ws
 }
+
+// A path override inside the root repository must keep pointing at the
+// worktree's own copy, not at the source checkout.
+func TestE2EInRepoPathOverrideStaysInsideWorktree(t *testing.T) {
+	pubspec := "environment:\n  sdk: ^3.0.0\ndependencies:\n  local:\n    path: packages/local\ndependency_overrides:\n  local:\n    path: packages/local\n"
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	rootRepo := filepath.Join(scope, "root-app")
+	initRepoWithPubspec(t, rootRepo, "root_app", pubspec)
+	writeDartPackage(t, filepath.Join(rootRepo, "packages", "local"), "local", "String localSource() => 'source-checkout';\n")
+	writeFile(t, filepath.Join(rootRepo, "bin", "main.dart"), "import 'package:local/local.dart';\n\nvoid main() => print(localSource());\n")
+	runGit(t, rootRepo, "add", ".")
+	runGit(t, rootRepo, "commit", "-m", "local package")
+	runGit(t, rootRepo, "push", "origin", "main")
+
+	runE2E(t, rootRepo, testEnv(home), "create", "feature-local", "--scope", scope, "--root-repo", "root-app",
+		"--no-package", "--yes", "--non-interactive").requireCode(t, 0)
+	rootWT := filepath.Join(home, "Documents", "worktrees", "feature-local", "root", "root-app")
+
+	if overrides := readOverrides(t, rootWT); len(overrides) > 0 {
+		if target := overridePathTarget(t, rootWT, overrides["local"]); target != filepath.Join(rootWT, "packages", "local") {
+			t.Fatalf("local override resolves to %s, want the worktree copy %s", target, filepath.Join(rootWT, "packages", "local"))
+		}
+	}
+
+	dart, err := exec.LookPath("dart")
+	if err != nil {
+		return
+	}
+	writeFile(t, filepath.Join(rootWT, "packages", "local", "lib", "local.dart"), "String localSource() => 'worktree-copy';\n")
+	dartEnv := append(testEnv(home), "PUB_CACHE="+filepath.Join(home, ".pub-cache"))
+	runDart(t, dart, rootWT, dartEnv, "pub", "get", "--offline")
+	if out := runDart(t, dart, rootWT, dartEnv, "run", "bin/main.dart"); !strings.Contains(out, "worktree-copy") {
+		t.Fatalf("root resolved the source checkout instead of the worktree copy:\n%s", out)
+	}
+}
+
+func TestE2EAddRepoTwiceKeepsRebasedOverrides(t *testing.T) {
+	ws := createWorkspaceWithRootPubspec(t, "feature-twice", nil, "environment:\n  sdk: ^3.0.0\ndependency_overrides:\n  shared:\n    path: ../shared\n")
+	for _, pkg := range []string{"a-pkg", "b-pkg"} {
+		initRepoWithPubspec(t, filepath.Join(ws.scope, pkg), strings.TrimSuffix(pkg, "-pkg"), "")
+		runE2E(t, ws.rootRepo, testEnv(ws.home), "add-repo", ws.name, "--scope", ws.scope, "--repo", pkg,
+			"--package-base", pkg+"=main", "--non-interactive").requireCode(t, 0)
+	}
+
+	got := readOverrides(t, ws.rootWT)
+	if target := overridePathTarget(t, ws.rootWT, got["shared"]); target != filepath.Join(ws.scope, "shared") {
+		t.Errorf("shared resolves to %s after two add-repo runs, want %s", target, filepath.Join(ws.scope, "shared"))
+	}
+	for _, name := range []string{"a", "b"} {
+		want := filepath.Join(ws.home, "Documents", "worktrees", ws.name, "packages", name+"-pkg")
+		if target := overridePathTarget(t, ws.rootWT, got[name]); target != want {
+			t.Errorf("%s resolves to %s, want %s", name, target, want)
+		}
+	}
+}
+
+func TestE2EMalformedRootPubspecReportsParseError(t *testing.T) {
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "workspace")
+	rootRepo := filepath.Join(scope, "root-app")
+	initRepoWithPubspec(t, rootRepo, "root_app", "dependency_overrides:\n  broken: [unclosed\n")
+
+	res := runE2E(t, rootRepo, testEnv(home), "create", "feature-bad", "--scope", scope, "--root-repo", "root-app",
+		"--no-package", "--yes", "--non-interactive")
+	res.requireCode(t, 1)
+	if !strings.Contains(res.stderr, "pubspec.yaml") || !strings.Contains(res.stderr, "yaml:") {
+		t.Fatalf("expected the error to name pubspec.yaml and the YAML parse cause, got:\n%s", res.stderr)
+	}
+}

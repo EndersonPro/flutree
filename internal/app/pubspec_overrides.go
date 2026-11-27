@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/EndersonPro/flutree/internal/domain"
 	"gopkg.in/yaml.v3"
@@ -102,7 +103,8 @@ func readOverridesSection(path string) (overrideSet, error) {
 }
 
 // rebasePathOverrides rewrites relative `path:` overrides written relative to
-// fromDir so they point at the same directory when read from toDir.
+// fromDir so they point at the same directory when read from toDir. Paths that
+// stay inside fromDir are left untouched: they point into the checkout itself.
 func rebasePathOverrides(set overrideSet, fromDir, toDir string) {
 	if filepath.Clean(fromDir) == filepath.Clean(toDir) {
 		return
@@ -117,6 +119,11 @@ func rebasePathOverrides(set overrideSet, fromDir, toDir string) {
 				continue
 			}
 			target := filepath.Join(fromDir, filepath.FromSlash(value.Value))
+			// A path inside the source repository also exists in the worktree
+			// checkout, so it already resolves to the worktree's own copy.
+			if inside, err := filepath.Rel(fromDir, target); err == nil && inside != ".." && !strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+				continue
+			}
 			if rel, err := filepath.Rel(toDir, target); err == nil {
 				value.Value = filepath.ToSlash(rel)
 			} else {

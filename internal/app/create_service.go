@@ -173,7 +173,7 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 
 	if err := writeOverrideFile(plan.OverridePath, plan.Root.Path, plan.Root.Repo.RepoRoot, plan.Packages); err != nil {
 		rollback()
-		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to write pubspec_overrides.yaml.", plan.OverridePath, err)
+		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to write pubspec_overrides.yaml.", err.Error(), err)
 	}
 
 	if err := ensureGitignoreContains(plan.Root.Path, filepath.Base(plan.OverridePath)); err != nil {
