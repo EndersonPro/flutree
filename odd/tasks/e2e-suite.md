@@ -25,7 +25,7 @@ Branch: `feat/e2e-suite` (stacked on `feat/cobra-migration`) · Delivery: `ask-o
 | T4 | S4 (B3) | inline | done | 3d5e423 |
 | T5 | S7 | inline | done | 5ac51e7 |
 | T6 | S9 | inline | done | 47a6b54 |
-| T7 | S10 | inline | done | (S10 commit) |
+| T7 | S10 | inline | done | a304e77 |
 
 ## Log
 
@@ -55,3 +55,4 @@ Branch: `feat/e2e-suite` (stacked on `feat/cobra-migration`) · Delivery: `ask-o
 - L19 T6: RED on 4 of 5 create cases, config round trip, non-boolean rejection, MCP set_config. GREEN — `ConfigService.Set/Get` dispatch by key (`scope.root`, `workspace.generate`); `GenerateWorkspace()` defaults to true; create reads it only when neither workspace flag changed; MCP config tools use Set/Get. Unsupported-key hint now lists both keys. Full suite and e2e gate green.
 - L20 (2026-11-26, user): SDK approach "Ejecutar el gestor (Recomendado)". Evidence: fvm 4.3.2 `fvm use {version}` flags `--force`, `--skip-pub-get`, `--skip-setup`; puro docs: `puro use <env>` acts on the current project, writes `.puro.json` (`"env"`) and "is automatically gitignored".
 - L21 T7: RED on 8 SDK e2e tests (fake fvm/puro record calls and cwd). GREEN — `SDKPort` + `internal/infra/sdk` (pins from worktree then source repo; `fvm use <v> --force --skip-pub-get`, `puro use <env>`); policy in `app/sdk_setup.go` (auto prefers fvm); services get it via `WithSDK(port, preference)` reading `sdk.manager` on every run (MCP included); failures keep worktrees, warn on stderr, and report `sdk_setup` in results. Full suite and e2e gate green. Not covered: a real fvm/puro run (would need a cached SDK).
+- L22 Review 8bfa836..a304e77 (high: process boundary in internal/infra/sdk): granted, four lenses, approved, acknowledged. Non-blocking notes clustered on internal/infra/sdk/sdk.go:39-51 (running the manager: no timeout, inherits environment), internal/app/sdk_setup.go:22-23 (sdk.manager read failure reported without a repo), internal/infra/git/git.go:175-202 (EnsureLocalExclude), internal/infra/mcp/server.go:193 (tool descriptions), cmd/flutree/create.go:90-94 (config read even when --json/wizard).
