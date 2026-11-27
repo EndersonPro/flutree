@@ -199,3 +199,114 @@ func TestCreateWizardReviewViewUsesEnglishChoices(t *testing.T) {
 		t.Fatalf("expected package detail row in review table, got: %q", view)
 	}
 }
+
+func filterTestRepos() []domain.DiscoveredFlutterRepo {
+	return []domain.DiscoveredFlutterRepo{
+		{Name: "alpha-app", PackageName: "alpha_app", RepoRoot: "/repos/alpha-app"},
+		{Name: "beta-app", PackageName: "beta_app", RepoRoot: "/repos/beta-app"},
+		{Name: "core", PackageName: "shared_kit", RepoRoot: "/repos/libs/core"},
+	}
+}
+
+func typeText(m createWizardModel, text string) createWizardModel {
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text)})
+	return updated.(createWizardModel)
+}
+
+func TestCreateWizardFilterMatchesNamePackageAndPathCaseInsensitively(t *testing.T) {
+	for _, tc := range []struct {
+		filter string
+		want   string
+	}{
+		{"BETA", "beta-app"},
+		{"shared", "core"},
+		{"libs/", "core"},
+	} {
+		m := newCreateWizardModel(CreateWizardInput{}, filterTestRepos())
+		m.step = stepRootRepo
+		m = typeText(m, tc.filter)
+		visible := m.rootVisible()
+		if len(visible) != 1 || m.repos[visible[0]].Name != tc.want {
+			t.Fatalf("filter %q: visible = %v, want only %s", tc.filter, visible, tc.want)
+		}
+		if m.repos[m.rootIndex].Name != tc.want {
+			t.Fatalf("filter %q: highlighted root = %s, want %s", tc.filter, m.repos[m.rootIndex].Name, tc.want)
+		}
+	}
+}
+
+func TestCreateWizardFilterBackspaceAndEscRestoreTheList(t *testing.T) {
+	m := newCreateWizardModel(CreateWizardInput{}, filterTestRepos())
+	m.step = stepRootRepo
+	m = typeText(m, "zz")
+	if len(m.rootVisible()) != 0 {
+		t.Fatalf("expected no match")
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(createWizardModel)
+	if m.step != stepRootRepo || m.errMsg == "" {
+		t.Fatalf("Enter with no match must stay on the root step with an error")
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = updated.(createWizardModel)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = updated.(createWizardModel)
+	if m.rootFilter != "" || len(m.rootVisible()) != 3 {
+		t.Fatalf("backspace should clear the filter, got %q", m.rootFilter)
+	}
+	m = typeText(m, "core")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(createWizardModel)
+	if m.cancelled || m.rootFilter != "" {
+		t.Fatalf("Esc with a filter must clear it without cancelling")
+	}
+}
+
+func TestCreateWizardPackageSelectionSurvivesFiltering(t *testing.T) {
+	m := newCreateWizardModel(CreateWizardInput{RootSelector: "alpha-app", PackageSelectors: []string{"beta-app"}}, filterTestRepos())
+	m.step = stepPackages
+
+	m = typeText(m, "core")
+	if got := m.pkgVisible(); len(got) != 1 {
+		t.Fatalf("expected one visible package, got %v", got)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}})
+	m = updated.(createWizardModel)
+
+	selected := m.selectedPackagesFromMap()
+	if len(selected) != 2 {
+		t.Fatalf("expected beta-app (hidden) and core selected, got %+v", selected)
+	}
+}
+
+func TestCreateWizardStartsInNavigatorWhenNoRepos(t *testing.T) {
+	m := newCreateWizardModel(CreateWizardInput{Scope: t.TempDir(), Discover: func(string) ([]domain.DiscoveredFlutterRepo, error) {
+		return nil, nil
+	}}, nil)
+	if m.step != stepScope {
+		t.Fatalf("expected the navigator step, got %v", m.step)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(createWizardModel)
+	if m.step != stepScope || m.nav.errMsg == "" {
+		t.Fatalf("expected to stay in the navigator with a message, got step=%v err=%q", m.step, m.nav.errMsg)
+	}
+}
+
+func TestCreateWizardSaveScopeOnlyOfferedWhenScopeDiffersFromPersisted(t *testing.T) {
+	m := newCreateWizardModel(CreateWizardInput{Scope: "/a", PersistedScope: "/a"}, filterTestRepos())
+	m.scopeChosen = true
+	if m.shouldSaveScope() {
+		t.Fatalf("scope equal to the persisted one must not be offered")
+	}
+	m.scope = "/b"
+	if !m.shouldSaveScope() {
+		t.Fatalf("a new scope should be saved by default")
+	}
+	m.step = stepReview
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m = updated.(createWizardModel)
+	if m.shouldSaveScope() {
+		t.Fatalf("s must toggle the save-scope option off")
+	}
+}

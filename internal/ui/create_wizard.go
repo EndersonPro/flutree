@@ -21,6 +21,13 @@ type CreateWizardInput struct {
 	NoPackage         bool
 	PackageSelectors  []string
 	PackageBaseBranch map[string]string
+
+	// Scope is the directory the repositories were discovered in. Discover lists
+	// the Flutter repositories of a directory and powers the scope navigator.
+	// PersistedScope is the current scope.root value (empty when unset).
+	Scope          string
+	Discover       func(scope string) ([]domain.DiscoveredFlutterRepo, error)
+	PersistedScope string
 }
 
 type CreateWizardResult struct {
@@ -32,6 +39,8 @@ type CreateWizardResult struct {
 	NoPackage         bool
 	PackageSelectors  []string
 	PackageBaseBranch map[string]string
+	Scope             string
+	SaveScope         bool
 	Apply             bool
 	Cancelled         bool
 }
@@ -44,6 +53,9 @@ const (
 	stepPackages
 	stepBranches
 	stepReview
+	// stepScope is the directory navigator: the first step when the starting
+	// scope has no repositories, otherwise opened from the root step.
+	stepScope
 )
 
 var (
@@ -73,6 +85,17 @@ type createWizardModel struct {
 	pkgCursor         int
 	pkgSelected       map[int]bool
 
+	rootFilter string
+	pkgFilter  string
+
+	scope          string
+	persistedScope string
+	discover       func(scope string) ([]domain.DiscoveredFlutterRepo, error)
+	scopeChosen    bool
+	saveScope      bool
+	nameConfirmed  bool
+	nav            dirNavigator
+
 	branchFieldIndex int
 	selectedPackages []domain.DiscoveredFlutterRepo
 	pkgBaseIndex     int
@@ -88,7 +111,7 @@ type createWizardModel struct {
 }
 
 func RunCreateWizard(input CreateWizardInput, repos []domain.DiscoveredFlutterRepo) (CreateWizardResult, error) {
-	if len(repos) == 0 {
+	if len(repos) == 0 && input.Discover == nil {
 		return CreateWizardResult{}, domain.NewError(domain.CategoryInput, 2, "No Flutter repositories found in scope.", "Adjust --scope so flutree can discover a root repository.", nil)
 	}
 
@@ -121,18 +144,25 @@ func RunCreateWizard(input CreateWizardInput, repos []domain.DiscoveredFlutterRe
 		NoPackage:         finalModel.noPackage,
 		PackageSelectors:  selectors,
 		PackageBaseBranch: copyStringMap(finalModel.pkgBaseBranch),
+		Scope:             finalModel.scope,
+		SaveScope:         finalModel.shouldSaveScope(),
 		Apply:             finalModel.finalChoice == 1,
 	}, nil
 }
 
-func newCreateWizardModel(input CreateWizardInput, repos []domain.DiscoveredFlutterRepo) createWizardModel {
-	orderedRepos := append([]domain.DiscoveredFlutterRepo(nil), repos...)
-	sort.Slice(orderedRepos, func(i, j int) bool {
-		if orderedRepos[i].Name != orderedRepos[j].Name {
-			return orderedRepos[i].Name < orderedRepos[j].Name
+func sortedRepos(repos []domain.DiscoveredFlutterRepo) []domain.DiscoveredFlutterRepo {
+	ordered := append([]domain.DiscoveredFlutterRepo(nil), repos...)
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].Name != ordered[j].Name {
+			return ordered[i].Name < ordered[j].Name
 		}
-		return orderedRepos[i].RepoRoot < orderedRepos[j].RepoRoot
+		return ordered[i].RepoRoot < ordered[j].RepoRoot
 	})
+	return ordered
+}
+
+func newCreateWizardModel(input CreateWizardInput, repos []domain.DiscoveredFlutterRepo) createWizardModel {
+	orderedRepos := sortedRepos(repos)
 
 	rootIndex := 0
 	for i, repo := range orderedRepos {
@@ -174,6 +204,15 @@ func newCreateWizardModel(input CreateWizardInput, repos []domain.DiscoveredFlut
 		pkgBaseBranch:     copyStringMap(input.PackageBaseBranch),
 		input:             ti,
 		finalChoice:       1,
+		scope:             input.Scope,
+		persistedScope:    input.PersistedScope,
+		discover:          input.Discover,
+		saveScope:         true,
+	}
+	if len(orderedRepos) == 0 {
+		m.step = stepScope
+		m.nav = newDirNavigator(input.Scope)
+		return m
 	}
 	m.refreshPackageCandidates(input.PackageSelectors)
 	return m
@@ -203,6 +242,8 @@ func (m createWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateBranches(msg)
 		case stepReview:
 			return m.updateReview(msg)
+		case stepScope:
+			return m.updateScope(msg)
 		}
 	}
 
@@ -238,15 +279,23 @@ func (m createWizardModel) View() string {
 	case stepRootRepo:
 		b.WriteString(wizardSectionStyle.Render("Step 2 - Choose root repository"))
 		b.WriteString("\n")
-		for i, repo := range m.repos {
+		b.WriteString(filterLine(m.rootFilter))
+		visible := m.rootVisible()
+		if len(visible) == 0 {
+			b.WriteString("No repositories match the filter.\n")
+		}
+		for _, idx := range visible {
 			cursor := " "
-			if i == m.rootIndex {
+			if idx == m.rootIndex {
 				cursor = ">"
 			}
+			repo := m.repos[idx]
 			b.WriteString(fmt.Sprintf("%s %s [%s] (%s)\n", cursor, repo.Name, repo.PackageName, repo.RepoRoot))
 		}
 		b.WriteString("\n")
-		b.WriteString(wizardHintStyle.Render("Arrow keys or j/k to move - Enter to confirm"))
+		b.WriteString(wizardHintStyle.Render("Scope: " + m.scope))
+		b.WriteString("\n")
+		b.WriteString(wizardHintStyle.Render("Type to filter - Arrow keys to move - Enter to confirm - ctrl+o change folder - Esc clears filter/cancels"))
 	case stepPackages:
 		b.WriteString(wizardSectionStyle.Render("Step 3 - Select packages"))
 		b.WriteString("\n")
@@ -260,23 +309,31 @@ func (m createWizardModel) View() string {
 			b.WriteString(wizardHintStyle.Render("Enter to continue"))
 			break
 		}
-		for i, pkg := range m.packageCandidates {
+		b.WriteString(filterLine(m.pkgFilter))
+		visible := m.pkgVisible()
+		if len(visible) == 0 {
+			b.WriteString("No packages match the filter.\n")
+		}
+		for pos, idx := range visible {
+			pkg := m.packageCandidates[idx]
 			cursor := " "
-			if i == m.pkgCursor {
+			if pos == m.pkgCursor {
 				cursor = ">"
 			}
 			marker := "○"
-			if m.pkgSelected[i] {
+			if m.pkgSelected[idx] {
 				marker = "◉"
 			}
 			b.WriteString(fmt.Sprintf("%s %s %s [%s]\n", cursor, marker, pkg.Name, pkg.PackageName))
 		}
 		b.WriteString("\n")
-		b.WriteString(wizardHintStyle.Render("Space to toggle - Enter to continue"))
+		b.WriteString(wizardHintStyle.Render("Type to filter - Arrow keys to move - Space to toggle - Enter to continue - Esc clears filter/cancels"))
 	case stepBranches:
 		b.WriteString(m.branchesView())
 	case stepReview:
 		b.WriteString(m.reviewView())
+	case stepScope:
+		b.WriteString(m.scopeView())
 	}
 
 	return b.String()
@@ -292,6 +349,7 @@ func (m createWizardModel) updateWorkspaceName(msg tea.KeyMsg) (tea.Model, tea.C
 		}
 		m.errMsg = ""
 		m.name = value
+		m.nameConfirmed = true
 		m.step = stepRootRepo
 		m.input.Blur()
 		return m, nil
@@ -307,18 +365,29 @@ func (m createWizardModel) updateWorkspaceName(msg tea.KeyMsg) (tea.Model, tea.C
 }
 
 func (m createWizardModel) updateRootRepo(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "up", "k":
-		if m.rootIndex > 0 {
-			m.rootIndex--
+	switch msg.Type {
+	case tea.KeyUp:
+		m.moveRoot(-1)
+		m.errMsg = ""
+		return m, nil
+	case tea.KeyDown:
+		m.moveRoot(1)
+		m.errMsg = ""
+		return m, nil
+	case tea.KeyCtrlO:
+		m.openNavigator()
+		return m, nil
+	case tea.KeyBackspace:
+		m.rootFilter = trimLastRune(m.rootFilter)
+		m.errMsg = ""
+		m.syncRootToFilter()
+		return m, nil
+	case tea.KeyEnter:
+		if len(m.rootVisible()) == 0 {
+			m.errMsg = "No repository matches the filter."
+			return m, nil
 		}
 		m.errMsg = ""
-	case "down", "j":
-		if m.rootIndex < len(m.repos)-1 {
-			m.rootIndex++
-		}
-		m.errMsg = ""
-	case "enter":
 		if m.noPackage {
 			m.selectedPackages = nil
 			m.pkgBaseBranch = map[string]string{}
@@ -330,10 +399,19 @@ func (m createWizardModel) updateRootRepo(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refreshPackageCandidates(selected)
 		m.step = stepPackages
 		return m, nil
-	case "esc":
+	case tea.KeyEsc:
+		if m.rootFilter != "" {
+			m.rootFilter = ""
+			m.syncRootToFilter()
+			return m, nil
+		}
 		m.cancelled = true
 		m.done = true
 		return m, tea.Quit
+	case tea.KeyRunes:
+		m.rootFilter += string(msg.Runes)
+		m.errMsg = ""
+		m.syncRootToFilter()
 	}
 	return m, nil
 }
@@ -368,21 +446,29 @@ func (m createWizardModel) updatePackages(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	switch msg.String() {
-	case "up", "k":
+	visible := m.pkgVisible()
+	switch msg.Type {
+	case tea.KeyUp:
 		if m.pkgCursor > 0 {
 			m.pkgCursor--
 		}
 		m.errMsg = ""
-	case "down", "j":
-		if m.pkgCursor < len(m.packageCandidates)-1 {
+	case tea.KeyDown:
+		if m.pkgCursor < len(visible)-1 {
 			m.pkgCursor++
 		}
 		m.errMsg = ""
-	case " ":
-		m.pkgSelected[m.pkgCursor] = !m.pkgSelected[m.pkgCursor]
+	case tea.KeyBackspace:
+		m.pkgFilter = trimLastRune(m.pkgFilter)
+		m.pkgCursor = 0
 		m.errMsg = ""
-	case "enter":
+	case tea.KeySpace:
+		if m.pkgCursor < len(visible) {
+			idx := visible[m.pkgCursor]
+			m.pkgSelected[idx] = !m.pkgSelected[idx]
+		}
+		m.errMsg = ""
+	case tea.KeyEnter:
 		selected := m.selectedPackagesFromMap()
 		if len(selected) == 0 {
 			m.errMsg = "Select at least one package."
@@ -392,10 +478,19 @@ func (m createWizardModel) updatePackages(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.selectedPackages = selected
 		m.step = stepBranches
 		m.prepareBranchFieldInput()
-	case "esc":
+	case tea.KeyEsc:
+		if m.pkgFilter != "" {
+			m.pkgFilter = ""
+			m.pkgCursor = 0
+			return m, nil
+		}
 		m.cancelled = true
 		m.done = true
 		return m, tea.Quit
+	case tea.KeyRunes:
+		m.pkgFilter += string(msg.Runes)
+		m.pkgCursor = 0
+		m.errMsg = ""
 	}
 
 	return m, nil
@@ -484,6 +579,10 @@ func (m createWizardModel) updateReview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.finalChoice < 1 {
 			m.finalChoice++
 		}
+	case "s":
+		if m.offersSaveScope() {
+			m.saveScope = !m.saveScope
+		}
 	case "enter":
 		m.done = true
 		return m, tea.Quit
@@ -505,6 +604,7 @@ func (m *createWizardModel) refreshPackageCandidates(preselected []string) {
 		m.packageCandidates = append(m.packageCandidates, repo)
 	}
 	m.pkgCursor = 0
+	m.pkgFilter = ""
 	m.pkgSelected = map[int]bool{}
 
 	for i, repo := range m.packageCandidates {
@@ -606,7 +706,16 @@ func (m createWizardModel) reviewView() string {
 	b.WriteString("\n")
 	b.WriteString(choiceApply)
 	b.WriteString("\n\n")
-	b.WriteString(wizardHintStyle.Render("Arrow keys to choose - Enter to finish"))
+	hint := "Arrow keys to choose - Enter to finish"
+	if m.offersSaveScope() {
+		state := "OFF"
+		if m.saveScope {
+			state = "ON"
+		}
+		b.WriteString(fmt.Sprintf("Save %s as default scope (scope.root): %s\n\n", m.scope, state))
+		hint = "Arrow keys to choose - s to toggle save scope - Enter to finish"
+	}
+	b.WriteString(wizardHintStyle.Render(hint))
 	return b.String()
 }
 
@@ -697,4 +806,181 @@ func matchesSelector(repo domain.DiscoveredFlutterRepo, selector string) bool {
 		return false
 	}
 	return repo.Name == sel || repo.PackageName == sel || domain.NormalizePath(repo.RepoRoot) == domain.NormalizePath(sel)
+}
+
+func trimLastRune(value string) string {
+	runes := []rune(value)
+	if len(runes) == 0 {
+		return ""
+	}
+	return string(runes[:len(runes)-1])
+}
+
+func filterLine(filter string) string {
+	if filter == "" {
+		return wizardHintStyle.Render("Filter: (type to filter)") + "\n"
+	}
+	return "Filter: " + filter + "\n"
+}
+
+// repoMatchesFilter is a case-insensitive substring match over the repository
+// name, package name and path.
+func repoMatchesFilter(repo domain.DiscoveredFlutterRepo, filter string) bool {
+	needle := strings.ToLower(strings.TrimSpace(filter))
+	if needle == "" {
+		return true
+	}
+	for _, field := range []string{repo.Name, repo.PackageName, repo.RepoRoot} {
+		if strings.Contains(strings.ToLower(field), needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// rootVisible returns the indexes (into m.repos) matching the root filter.
+func (m createWizardModel) rootVisible() []int {
+	out := make([]int, 0, len(m.repos))
+	for i, repo := range m.repos {
+		if repoMatchesFilter(repo, m.rootFilter) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// pkgVisible returns the indexes (into m.packageCandidates) matching the package filter.
+func (m createWizardModel) pkgVisible() []int {
+	out := make([]int, 0, len(m.packageCandidates))
+	for i, repo := range m.packageCandidates {
+		if repoMatchesFilter(repo, m.pkgFilter) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+func (m *createWizardModel) moveRoot(delta int) {
+	visible := m.rootVisible()
+	pos := -1
+	for i, idx := range visible {
+		if idx == m.rootIndex {
+			pos = i
+			break
+		}
+	}
+	next := pos + delta
+	if pos < 0 {
+		next = 0
+	}
+	if next < 0 || next >= len(visible) {
+		return
+	}
+	m.rootIndex = visible[next]
+}
+
+// syncRootToFilter keeps the highlighted root among the visible repositories.
+func (m *createWizardModel) syncRootToFilter() {
+	visible := m.rootVisible()
+	if len(visible) == 0 {
+		return
+	}
+	for _, idx := range visible {
+		if idx == m.rootIndex {
+			return
+		}
+	}
+	m.rootIndex = visible[0]
+}
+
+func (m createWizardModel) offersSaveScope() bool {
+	if !m.scopeChosen {
+		return false
+	}
+	return domain.NormalizePath(m.scope) != domain.NormalizePath(m.persistedScope)
+}
+
+func (m createWizardModel) shouldSaveScope() bool {
+	return m.offersSaveScope() && m.saveScope
+}
+
+func (m *createWizardModel) openNavigator() {
+	if m.discover == nil {
+		return
+	}
+	m.nav = newDirNavigator(m.scope)
+	m.step = stepScope
+}
+
+func (m createWizardModel) updateScope(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyUp:
+		m.nav.moveUp()
+	case tea.KeyDown:
+		m.nav.moveDown()
+	case tea.KeyEnter:
+		m.nav.enter()
+	case tea.KeyTab:
+		return m.selectScope()
+	case tea.KeyEsc:
+		if len(m.repos) > 0 {
+			m.step = stepRootRepo
+			return m, nil
+		}
+		m.cancelled = true
+		m.done = true
+		return m, tea.Quit
+	case tea.KeyRunes:
+		switch string(msg.Runes) {
+		case "k":
+			m.nav.moveUp()
+		case "j":
+			m.nav.moveDown()
+		}
+	}
+	return m, nil
+}
+
+func (m createWizardModel) selectScope() (tea.Model, tea.Cmd) {
+	dir := m.nav.path
+	if m.discover == nil {
+		return m, nil
+	}
+	repos, err := m.discover(dir)
+	if err != nil || len(repos) == 0 {
+		m.nav.errMsg = fmt.Sprintf("No Flutter repositories found in %s.", dir)
+		return m, nil
+	}
+
+	m.repos = sortedRepos(repos)
+	m.scope = dir
+	m.scopeChosen = true
+	m.saveScope = true
+	m.rootIndex = 0
+	m.rootFilter = ""
+	m.refreshPackageCandidates(nil)
+	m.selectedPackages = nil
+	m.pkgBaseBranch = map[string]string{}
+	m.errMsg = ""
+	if m.nameConfirmed {
+		m.step = stepRootRepo
+	} else {
+		m.step = stepWorkspaceName
+		m.input.Focus()
+	}
+	return m, nil
+}
+
+func (m createWizardModel) scopeView() string {
+	var b strings.Builder
+	b.WriteString(wizardSectionStyle.Render("Choose scope folder"))
+	b.WriteString("\n")
+	b.WriteString(m.nav.view())
+	b.WriteString("\n")
+	hint := "Arrow keys or j/k to move - Enter to open - Tab to select this folder as scope - Esc to cancel"
+	if len(m.repos) > 0 {
+		hint = "Arrow keys or j/k to move - Enter to open - Tab to select this folder as scope - Esc to go back"
+	}
+	b.WriteString(wizardHintStyle.Render(hint))
+	return b.String()
 }

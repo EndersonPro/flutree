@@ -96,6 +96,14 @@ Options:
 - `--non-interactive`: disable prompts; requires explicit `--yes` and `--root-repo`.
 - `--reuse-existing-branch`: allow reusing existing local branches without interactive prompt (required in non-interactive mode when target branch already exists).
 
+Interactive scope navigator:
+- If the resolved scope (`--scope` > `scope.root` > current directory) has no Flutter repositories, the wizard opens a folder navigator instead of failing. On the root step, `ctrl+o` opens it at any time to change folder.
+- Navigator keys: `Up`/`Down` (or `j`/`k`) move, `Enter` opens the highlighted folder (`..` goes up), `Tab` selects the current folder as scope, `Esc` goes back (or cancels when there is no previous scope).
+- Selecting a folder discovers its repositories; if none are found the navigator stays open and shows `No Flutter repositories found in <dir>.`.
+- The root and package steps filter as you type (case-insensitive over repository name, package name and path); `Backspace` edits the filter, `Esc` clears it. Package selections made before filtering are kept.
+- When the scope was chosen in the navigator and differs from `scope.root`, the review step shows `Save <dir> as default scope (scope.root)` (on by default, `s` toggles it). It is persisted only after a successful apply.
+- Non-interactive mode and explicit flags are unchanged.
+
 Two-phase flow:
 - phase 1: dry-plan preview prints selected root/packages, branches, commands, and file outputs.
 - phase 2: single final confirmation token gate before any `git worktree add` and file/registry mutation.

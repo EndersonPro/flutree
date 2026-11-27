@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/EndersonPro/flutree/internal/app"
@@ -35,7 +36,17 @@ func newCreateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create a new worktree with interactive wizard",
-		Long:  "Create a new worktree with interactive wizard.",
+		Long: `Create a new worktree with interactive wizard.
+
+The scope (--scope > scope.root > current directory) decides where Flutter
+repositories are discovered. In the interactive wizard, if the scope has no
+Flutter repositories a folder navigator opens so you can pick the scope folder;
+press ctrl+o on the root step to change folder at any time. Navigator keys:
+Up/Down (or j/k) move, Enter opens a folder (.. goes up), Tab selects the
+current folder as scope, Esc goes back or cancels. Root and package lists
+filter as you type. When the scope was chosen in the navigator and differs from
+scope.root, the review step offers to save it as the default scope (press s to
+toggle, on by default).`,
 		Example: `  flutree create feature-login
   flutree create feature-login --scope ~/code --root-repo app --package core --non-interactive --yes`,
 		Args: requireName("Missing worktree name.", "Usage: flutree create <name> [flags]"),
@@ -120,8 +131,14 @@ func runCreate(cmd *cobra.Command, name string, opts *createOptions) error {
 
 	applyAfterDryRun := true
 	wizardUsed := false
+	saveScope := false
+	scopeToSave := ""
 	if !opts.nonInteractive && ui.SupportsInteractiveWizard() {
-		repos, err := gitGateway.DiscoverFlutterRepos(resolvedScope)
+		// An empty scope is not an error here: the wizard opens its folder
+		// navigator so the user can pick another scope. The scope itself was
+		// already validated by the resolver.
+		repos, _ := gitGateway.DiscoverFlutterRepos(resolvedScope)
+		persistedScope, err := app.NewConfigService(configRepo).Get("scope.root")
 		if err != nil {
 			return err
 		}
@@ -135,6 +152,9 @@ func runCreate(cmd *cobra.Command, name string, opts *createOptions) error {
 			NoPackage:         opts.noPackage,
 			PackageSelectors:  opts.packages,
 			PackageBaseBranch: baseMap,
+			Scope:             resolvedScope,
+			Discover:          gitGateway.DiscoverFlutterRepos,
+			PersistedScope:    persistedScope,
 		}, repos)
 		if err != nil {
 			return err
@@ -151,6 +171,11 @@ func runCreate(cmd *cobra.Command, name string, opts *createOptions) error {
 		createInput.PackageSelectors = wizardResult.PackageSelectors
 		createInput.PackageBaseBranch = wizardResult.PackageBaseBranch
 		createInput.GenerateWorkspace = wizardResult.GenerateWorkspace
+		if strings.TrimSpace(wizardResult.Scope) != "" {
+			createInput.ExecutionScope = wizardResult.Scope
+		}
+		saveScope = wizardResult.SaveScope
+		scopeToSave = wizardResult.Scope
 		createInput.NonInteractive = true
 		applyAfterDryRun = wizardResult.Apply
 		wizardUsed = true
@@ -203,6 +228,13 @@ func runCreate(cmd *cobra.Command, name string, opts *createOptions) error {
 	})
 	if err != nil {
 		return err
+	}
+	// The workspace already exists: failing to remember the scope is only a
+	// warning, never a failed create.
+	if saveScope {
+		if _, err := app.NewConfigService(configRepo).Set("scope.root", scopeToSave); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "[warning] Could not save %s as scope.root: %v\n", scopeToSave, err)
+		}
 	}
 	if jsonOutput(cmd) {
 		printJSON(cmd.OutOrStdout(), result)

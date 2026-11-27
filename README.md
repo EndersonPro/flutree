@@ -209,6 +209,8 @@ flutree create <name> [flags]
 | `--package-base` | string |  | Override package base branch as `<selector>=<branch>` (repeatable) |
 | `--copy-root-file` | string |  | Extra root-level file/pattern to copy into each worktree (repeatable). By default `.env` and `.env.*` are copied when present |
 
+Interactive mode can be run from any directory. When the scope has no Flutter repositories, a folder navigator opens (`Up`/`Down` move, `Enter` opens a folder, `Tab` selects the current folder as scope, `Esc` goes back); press `ctrl+o` on the root step to change folder at any time. The root and package lists filter as you type. If the scope you picked differs from `scope.root`, the review step offers to save it as the default scope (`s` toggles, on by default). Non-interactive mode is unchanged.
+
 ### add-repo
 
 Attaches additional repositories to an existing managed workspace and regenerates `pubspec_overrides.yaml`.
