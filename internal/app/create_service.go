@@ -93,8 +93,13 @@ func (s *CreateService) BuildDryPlan(input domain.CreateInput) (domain.CreateDry
 	}
 	sort.Slice(packagePlans, func(i, j int) bool { return packagePlans[i].Repo.Name < packagePlans[j].Repo.Name })
 
-	overridePath := filepath.Join(rootPlan.Path, overrideFileName)
-	overrideContent := buildOverrideContent(rootPlan, packagePlans)
+	// Without packages there is nothing to override: the root pubspec's own
+	// dependency_overrides already apply, so no pubspec_overrides.yaml is written.
+	overridePath, overrideContent := "", ""
+	if len(packagePlans) > 0 {
+		overridePath = filepath.Join(rootPlan.Path, overrideFileName)
+		overrideContent = buildOverrideContent(rootPlan, packagePlans)
+	}
 
 	workspacePath := ""
 	workspaceFolders := []string{}
@@ -171,14 +176,15 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 		created = append(created, pkg)
 	}
 
-	if err := writeOverrideFile(plan.OverridePath, plan.Root.Path, plan.Root.Repo.RepoRoot, plan.Packages); err != nil {
-		rollback()
-		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to write pubspec_overrides.yaml.", err.Error(), err)
-	}
-
-	if err := s.git.EnsureLocalExclude(plan.Root.Path, overrideExcludePattern); err != nil {
-		rollback()
-		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to ignore pubspec_overrides.yaml in .git/info/exclude.", err.Error(), err)
+	if plan.OverridePath != "" {
+		if err := writeOverrideFile(plan.OverridePath, plan.Root.Path, plan.Root.Repo.RepoRoot, plan.Packages); err != nil {
+			rollback()
+			return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to write pubspec_overrides.yaml.", err.Error(), err)
+		}
+		if err := s.git.EnsureLocalExclude(plan.Root.Path, overrideExcludePattern); err != nil {
+			rollback()
+			return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to ignore pubspec_overrides.yaml in .git/info/exclude.", err.Error(), err)
+		}
 	}
 
 	if plan.WorkspacePath != "" {

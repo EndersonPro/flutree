@@ -138,8 +138,8 @@ func TestBuildDryPlanNoPackageCreatesRootOnlyPlan(t *testing.T) {
 	if len(plan.Packages) != 0 {
 		t.Fatalf("expected no package plans in no-package mode, got %d", len(plan.Packages))
 	}
-	if !strings.Contains(plan.OverrideContent, "dependency_overrides:\n  {}") {
-		t.Fatalf("expected empty overrides in no-package mode, got: %s", plan.OverrideContent)
+	if plan.OverridePath != "" || plan.OverrideContent != "" {
+		t.Fatalf("expected no override file in no-package mode, got path=%q content=%q", plan.OverridePath, plan.OverrideContent)
 	}
 	if p.askTextCalls != 0 {
 		t.Fatalf("expected no package base prompts in no-package mode, got %d", p.askTextCalls)

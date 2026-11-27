@@ -719,12 +719,11 @@ func TestCreateNoPackageCreatesRootOnlyArtifacts(t *testing.T) {
 	}
 
 	overridePath := filepath.Join(home, "Documents", "worktrees", "feature-login", "root", "root-app", "pubspec_overrides.yaml")
-	content, err := os.ReadFile(overridePath)
-	if err != nil {
-		t.Fatalf("failed to read override file: %v", err)
+	if _, err := os.Stat(overridePath); !os.IsNotExist(err) {
+		t.Fatalf("expected no pubspec_overrides.yaml in no-package mode, stat err: %v", err)
 	}
-	if !strings.Contains(string(content), "dependency_overrides:\n  {}") {
-		t.Fatalf("expected empty override map in no-package mode, got: %s", string(content))
+	if strings.Contains(create.stdout, "pubspec_overrides.yaml") {
+		t.Fatalf("dry plan must not list an override file in no-package mode:\n%s", create.stdout)
 	}
 
 	pkgPath := filepath.Join(home, "Documents", "worktrees", "feature-login", "packages")

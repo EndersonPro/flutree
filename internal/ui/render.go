@@ -23,7 +23,10 @@ func RenderCreateDryPlan(plan domain.CreateDryPlan) {
 	}
 	worktreeTable := renderTable([]string{"Role", "Repository", "Package", "Branch", "Base Branch", "Path"}, rows)
 
-	fileRows := [][]string{{"Override", plan.OverridePath}}
+	fileRows := [][]string{}
+	if plan.OverridePath != "" {
+		fileRows = append(fileRows, []string{"Override", plan.OverridePath})
+	}
 	if plan.WorkspacePath != "" {
 		fileRows = append(fileRows, []string{"Workspace", plan.WorkspacePath})
 	}
@@ -38,10 +41,12 @@ func RenderCreateDryPlan(plan domain.CreateDryPlan) {
 	b.WriteString("\n")
 	b.WriteString(uiBodyStyle.Render(worktreeTable))
 	b.WriteString("\n")
-	b.WriteString(filesHeader)
-	b.WriteString("\n")
-	b.WriteString(uiBodyStyle.Render(filesTable))
-	b.WriteString("\n")
+	if len(fileRows) > 0 {
+		b.WriteString(filesHeader)
+		b.WriteString("\n")
+		b.WriteString(uiBodyStyle.Render(filesTable))
+		b.WriteString("\n")
+	}
 	b.WriteString(safetyMsg)
 	fmt.Println(b.String())
 }

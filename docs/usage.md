@@ -118,7 +118,7 @@ Generated worktrees are grouped into:
 - packages: `~/Documents/worktrees/<worktree-name-slug>/packages/<package-repo-folder>/`
 
 Package override output:
-- `flutree create` writes exactly one `pubspec_overrides.yaml` in the selected root worktree.
+- `flutree create` writes exactly one `pubspec_overrides.yaml` in the selected root worktree when at least one package is selected; root-only workspaces (`--no-package`) get no override file.
   - It keeps every `dependency_overrides` entry already declared in the root `pubspec.yaml` (version, `path`, `git`, `hosted`), because a `pubspec_overrides.yaml` replaces those instead of merging with them. Relative paths that point outside the repository are rebased so they still resolve from the worktree; selected package worktrees win on conflict.
   - The file is ignored through `.git/info/exclude` (never committed); the tracked `.gitignore` is not modified.
 - dependency paths target selected package worktree paths.

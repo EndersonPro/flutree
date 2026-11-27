@@ -10,6 +10,11 @@ Branch: `feat/e2e-suite` (stacked on `feat/cobra-migration`) · Delivery: `ask-o
 - S5 — "Cuando creo un pubspec_override este no está teniendo en cuenta los overrides que ya existen en el pubspec principal, los ignora, debe tenerlos en cuenta al momento de crear el grafo de dependencias entre multirepos". The generated `pubspec_overrides.yaml` (create and add-repo) must carry every `dependency_overrides` entry of the root `pubspec.yaml` — version, `path`, `git`, `hosted` — with relative paths rebased so they still point at the same directory from the worktree; flutree's package worktree entries win on conflict.
 - S6 — "además de que necesito que agreguemos una prueba real o realizar pruebas de que el multirepo funcione". An e2e test resolves a generated multi-repo workspace with the real Dart SDK (`dart pub get` + `dart run`) and proves the root uses the package worktrees and the carried overrides; skipped only when `dart` is not on PATH.
 
+- S7 — "Avoid creating empty override files when no packages are needed." `create` without packages writes no `pubspec_overrides.yaml` (the root pubspec's own overrides already apply) and the dry plan does not list it.
+- S8 — "When packages are needed, respect current overrides and add new ones." Covered by S5 (cbad141, 39e5678).
+- S9 — "Global flag to auto-create yscade workspace." Meaning of "yscade" pending clarification.
+- S10 — "Auto-inject sdk version for each package and root to avoid run puro/tym in each one. (Maybe set a global choice to select the preferred SDK manager)" Details pending clarification.
+
 ## Tasks
 
 | ID | Specs | Route | Status | Commit |
@@ -17,7 +22,10 @@ Branch: `feat/e2e-suite` (stacked on `feat/cobra-migration`) · Delivery: `ask-o
 | T1 | S1, S2 | inline | done | 6d110e4, 7e32ef0 |
 | T2 | S3 | inline | done | 9fa5443 |
 | T3 | S5, S6 | inline | done | cbad141, 39e5678 |
-| T4 | S4 (B3) | inline | done | (B3 commit) |
+| T4 | S4 (B3) | inline | done | 3d5e423 |
+| T5 | S7 | inline | done | (S7 commit) |
+| T6 | S9 | — | blocked (clarify "yscade") | — |
+| T7 | S10 | — | blocked (clarify SDK injection) | — |
 
 ## Log
 
@@ -40,3 +48,6 @@ Branch: `feat/e2e-suite` (stacked on `feat/cobra-migration`) · Delivery: `ask-o
 - L12 Review 9fa5443..39e5678 (medium, item 5 escalation): granted, approved, acknowledged.
 - L13 (2026-11-26, user): B3 selected ("B3: complete"); approach "Usar info/exclude (Recomendado)". B4 not selected — left open.
 - L14 T4: RED — TestE2ECreateKeepsTrackedGitignoreAndIgnoresOverrides, TestE2ECompleteFreshWorkspaceWithPackagesWithoutForce, TestE2ECompleteAfterAddRepoWithoutForce, lifecycle test without --force. GREEN — GitPort.EnsureLocalExclude writes the anchored `/pubspec_overrides.yaml` to `git rev-parse --git-path info/exclude` (shared by the repo's worktrees, untracked files only); removed ensureGitignoreContains and its 2 unit tests. TestE2ECompleteDirtyWorktreeNeedsForce still blocks real edits. Full suite and e2e gate green. Known: workspaces created by older flutree versions keep their modified .gitignore and still need --force once.
+- L15 (2026-11-26, user): "Si necesitas el texto:\n• Avoid creating empty override files when no packages are needed.\n• When packages are needed, respect current overrides and add new ones.\n• Global flag to auto-create yscade workspace.\nAuto-inject sdk version for each package and root to avoid run puro/tym in each one. (Maybe set a global choice to select the preferred SDK manager)"
+- L16 T5: reproduced — `create --no-package` writes `dependency_overrides:\n  {}`; TestCreateNoPackageCreatesRootOnlyArtifacts pins that old behavior and is updated to S7.
+- L17 T5: RED on TestCreateNoPackageCreatesRootOnlyArtifacts (file existed). GREEN — BuildDryPlan leaves OverridePath/OverrideContent empty without packages, Apply skips the write and the exclude, the dry plan hides "Planned Files" when empty. Override e2e tests that relied on --no-package now select a package; removed the conditional guard flagged by review (R3-001). Full suite and e2e gate green.

@@ -241,15 +241,15 @@ func TestE2EInRepoPathOverrideStaysInsideWorktree(t *testing.T) {
 	runGit(t, rootRepo, "add", ".")
 	runGit(t, rootRepo, "commit", "-m", "local package")
 	runGit(t, rootRepo, "push", "origin", "main")
+	// A selected package makes flutree write pubspec_overrides.yaml.
+	initRepoWithPubspec(t, filepath.Join(scope, "core-pkg"), "core", "environment:\n  sdk: ^3.0.0\n")
 
 	runE2E(t, rootRepo, testEnv(home), "create", "feature-local", "--scope", scope, "--root-repo", "root-app",
-		"--no-package", "--yes", "--non-interactive").requireCode(t, 0)
+		"--package", "core-pkg", "--package-base", "core-pkg=main", "--yes", "--non-interactive").requireCode(t, 0)
 	rootWT := filepath.Join(home, "Documents", "worktrees", "feature-local", "root", "root-app")
 
-	if overrides := readOverrides(t, rootWT); len(overrides) > 0 {
-		if target := overridePathTarget(t, rootWT, overrides["local"]); target != filepath.Join(rootWT, "packages", "local") {
-			t.Fatalf("local override resolves to %s, want the worktree copy %s", target, filepath.Join(rootWT, "packages", "local"))
-		}
+	if target := overridePathTarget(t, rootWT, readOverrides(t, rootWT)["local"]); target != filepath.Join(rootWT, "packages", "local") {
+		t.Fatalf("local override resolves to %s, want the worktree copy %s", target, filepath.Join(rootWT, "packages", "local"))
 	}
 
 	dart, err := exec.LookPath("dart")
@@ -289,9 +289,10 @@ func TestE2EMalformedRootPubspecReportsParseError(t *testing.T) {
 	scope := filepath.Join(t.TempDir(), "workspace")
 	rootRepo := filepath.Join(scope, "root-app")
 	initRepoWithPubspec(t, rootRepo, "root_app", "dependency_overrides:\n  broken: [unclosed\n")
+	initRepoWithPubspec(t, filepath.Join(scope, "core-pkg"), "core", "")
 
 	res := runE2E(t, rootRepo, testEnv(home), "create", "feature-bad", "--scope", scope, "--root-repo", "root-app",
-		"--no-package", "--yes", "--non-interactive")
+		"--package", "core-pkg", "--package-base", "core-pkg=main", "--yes", "--non-interactive")
 	res.requireCode(t, 1)
 	if !strings.Contains(res.stderr, "pubspec.yaml") || !strings.Contains(res.stderr, "yaml:") {
 		t.Fatalf("expected the error to name pubspec.yaml and the YAML parse cause, got:\n%s", res.stderr)
