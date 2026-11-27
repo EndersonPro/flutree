@@ -2,6 +2,50 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0](https://github.com/EndersonPro/flutree/compare/v1.1.1...v2.0.0) (2026-11-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **mcp:** MCP complete_worktree and pubget with force=true now require confirmation (elicitation or confirm=true) before acting.
+* **cli:** long flags require two dashes; single-dash forms such as `-all` or `-json` accepted by the previous stdlib parser are rejected.
+* **cli:** help output is Cobra-formatted, usage hints say [flags] instead of [options], and unknown commands report `unknown command "x" for "flutree"` instead of `No such command 'x'.`
+
+### Features
+
+* **cli:** migrate command layer to spf13/cobra ([a169fa1](https://github.com/EndersonPro/flutree/commit/a169fa155f63eecc627e623859507904006a5964))
+* **config:** persist workspace.generate to control VSCode workspace creation ([47a6b54](https://github.com/EndersonPro/flutree/commit/47a6b54bf4b96c8f77c2b241e06385ccb8230922))
+* **create:** pick the root repo directly and add packages from any folder ([9fc3a77](https://github.com/EndersonPro/flutree/commit/9fc3a77275b0adc8a366bcba051a7b01c11baf8b))
+* **create:** pick the scope folder interactively from anywhere ([62434ec](https://github.com/EndersonPro/flutree/commit/62434ec08852260f89581451949c18b6e07a980a))
+* **mcp:** ask the user through elicitation and add guided flow prompts ([b7ea3c8](https://github.com/EndersonPro/flutree/commit/b7ea3c8227cee7c3d0ef65ee44fd6c8f56a8991e))
+* **mcp:** install into more agents, scoped, with dry-run, uninstall and doctor ([305a0b8](https://github.com/EndersonPro/flutree/commit/305a0b88051c282938f43a8d898fd175595b50fd))
+* **mcp:** record each worktree's base branch and report ahead/behind ([93c0e78](https://github.com/EndersonPro/flutree/commit/93c0e782f0a72e467dd5b57f78f0d013aa8cdd50))
+* **mcp:** teach agents the workflow and expose planning and inspection tools ([28df326](https://github.com/EndersonPro/flutree/commit/28df32696569cb81f09e4699daecec98d098d4d7))
+* **sdk:** prepare the Flutter SDK with fvm or puro in every new worktree ([a304e77](https://github.com/EndersonPro/flutree/commit/a304e77e4152cd6a4aad26410b009c472d1e40a1))
+
+
+### Bug Fixes
+
+* address Codex review findings on PR [#56](https://github.com/EndersonPro/flutree/issues/56) ([21a1324](https://github.com/EndersonPro/flutree/commit/21a1324d83992e216cfc68c4f4a5ace6a7f09c86))
+* **ci:** retire release-brew job, goreleaser is sole release publisher ([6ba0486](https://github.com/EndersonPro/flutree/commit/6ba0486346cae31e7d2195d12e29afd5d4bd4f5d))
+* **cli:** keep stdout to a single JSON document in pubget and create ([6d110e4](https://github.com/EndersonPro/flutree/commit/6d110e451629067789d265d3ab140d4d87856ef1))
+* **cli:** route --version through the version command ([3cd035a](https://github.com/EndersonPro/flutree/commit/3cd035a74d473f799c5cd6a37ec977f1a166ad3f))
+* **complete:** stop dirtying the root worktree with a .gitignore edit ([3d5e423](https://github.com/EndersonPro/flutree/commit/3d5e42395919be20561ead389b3051e71788cf1b))
+* **create:** accept any commit-ish package base and start from origin when only remote ([75dfb36](https://github.com/EndersonPro/flutree/commit/75dfb36ca89c94408403780b3c5588a9c271a788))
+* **create:** skip pubspec_overrides.yaml when no packages are selected ([5ac51e7](https://github.com/EndersonPro/flutree/commit/5ac51e7c963f12f89a15d3d10fa69204f184006b))
+* **mcp:** follow OpenCode's servers layout, respect JSONC and quiet doctor ([65e0484](https://github.com/EndersonPro/flutree/commit/65e04840236d30b3733b8d7934e6593f287299ff))
+* **mcp:** never write on install --dry-run and fail doctor on unreadable configs ([b04491d](https://github.com/EndersonPro/flutree/commit/b04491d23dcfb5d31d3a10fe6cfdbd5ce315e22b))
+* **mcp:** treat an elicitation accept without confirm as a decline ([060bf88](https://github.com/EndersonPro/flutree/commit/060bf883c891c886f07df9c96de8a8eb933ebd41))
+* **overrides:** carry root pubspec dependency_overrides into pubspec_overrides.yaml ([cbad141](https://github.com/EndersonPro/flutree/commit/cbad1411ba0a4060e34f8eca481de4d009b58e4f))
+* **overrides:** keep in-repo path overrides pointing at the worktree copy ([39e5678](https://github.com/EndersonPro/flutree/commit/39e56788eea540b78f7e0133da0086e08b017730))
+* **overrides:** resolve the whole dependency graph from the worktrees ([eba99ff](https://github.com/EndersonPro/flutree/commit/eba99ffbe49e16159f72b484ea98d79a1daf7206))
+* prune stale worktrees, roll back failed create, align JSON error codes ([d8030dc](https://github.com/EndersonPro/flutree/commit/d8030dcac1a1be8724d87dd4085100b5c97c57f1))
+
+
+### Tests
+
+* **cli:** pin JSON envelopes and repeatable flags; document single-dash break ([d4cb1e9](https://github.com/EndersonPro/flutree/commit/d4cb1e96217a4b88e91f29afd63f3cf043917f88))
+
 ## [1.1.1](https://github.com/EndersonPro/flutree/compare/v1.1.0...v1.1.1) (2026-06-12)
 
 
