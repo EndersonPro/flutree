@@ -65,7 +65,8 @@ func (f *fakeAddRepoGit) RemoveWorktree(repoRoot, path string, force bool) error
 	f.removed = append(f.removed, repoRoot+"::"+path)
 	return nil
 }
-func (f *fakeAddRepoGit) IsDirty(string) (bool, error) { return false, nil }
+func (f *fakeAddRepoGit) IsDirty(string) (bool, error)            { return false, nil }
+func (f *fakeAddRepoGit) EnsureLocalExclude(string, string) error { return nil }
 func (f *fakeAddRepoGit) DiscoverFlutterRepos(scope string) ([]domain.DiscoveredFlutterRepo, error) {
 	return append([]domain.DiscoveredFlutterRepo{}, f.discovered...), nil
 }

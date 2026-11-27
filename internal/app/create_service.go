@@ -176,9 +176,9 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to write pubspec_overrides.yaml.", err.Error(), err)
 	}
 
-	if err := ensureGitignoreContains(plan.Root.Path, filepath.Base(plan.OverridePath)); err != nil {
+	if err := s.git.EnsureLocalExclude(plan.Root.Path, overrideExcludePattern); err != nil {
 		rollback()
-		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to update .gitignore for pubspec_overrides.yaml.", filepath.Join(plan.Root.Path, ".gitignore"), err)
+		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to ignore pubspec_overrides.yaml in .git/info/exclude.", err.Error(), err)
 	}
 
 	if plan.WorkspacePath != "" {
@@ -459,27 +459,4 @@ func writeWorkspace(path string, folders []string) error {
 		return domain.NewError(domain.CategoryPersistence, 5, "Failed to write VSCode workspace file.", path, err)
 	}
 	return nil
-}
-
-func ensureGitignoreContains(repoPath, entry string) error {
-	gitignorePath := filepath.Join(repoPath, ".gitignore")
-
-	content := ""
-	if b, err := os.ReadFile(gitignorePath); err == nil {
-		content = string(b)
-		for _, line := range strings.Split(content, "\n") {
-			if strings.TrimSpace(line) == entry {
-				return nil
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
-	if content != "" && !strings.HasSuffix(content, "\n") {
-		content += "\n"
-	}
-	content += entry + "\n"
-
-	return os.WriteFile(gitignorePath, []byte(content), 0o644)
 }

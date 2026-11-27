@@ -237,9 +237,9 @@ func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, e
 		rollback()
 		return domain.AddRepoResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to update pubspec_overrides.yaml.", err.Error(), err)
 	}
-	if err := ensureGitignoreContains(rootRecord.Path, filepath.Base(overridePath)); err != nil {
+	if err := s.git.EnsureLocalExclude(rootRecord.Path, overrideExcludePattern); err != nil {
 		rollback()
-		return domain.AddRepoResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to update .gitignore for pubspec_overrides.yaml.", filepath.Join(rootRecord.Path, ".gitignore"), err)
+		return domain.AddRepoResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to ignore pubspec_overrides.yaml in .git/info/exclude.", err.Error(), err)
 	}
 
 	workspacePackages := make([]domain.PlannedWorktree, 0, len(allPackages))

@@ -169,6 +169,8 @@ flutree create feature-login --scope . --root-repo root-app --yes --non-interact
 
 Package override generation rules:
 - `flutree create` writes one `pubspec_overrides.yaml` in the selected root worktree.
+  - It keeps every `dependency_overrides` entry already declared in the root `pubspec.yaml` (version, `path`, `git`, `hosted`), because a `pubspec_overrides.yaml` replaces those instead of merging with them. Relative paths that point outside the repository are rebased so they still resolve from the worktree; selected package worktrees win on conflict.
+  - The file is ignored through `.git/info/exclude` (never committed); the tracked `.gitignore` is not modified.
 - `pubspec.yaml` is not modified.
 
 VSCode workspace output is MVP-only and includes `folders` entries only.

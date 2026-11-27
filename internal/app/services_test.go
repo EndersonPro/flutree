@@ -33,6 +33,8 @@ func (f *fakeGit) RemoveWorktree(repoRoot, path string, force bool) error {
 	f.removed = append(f.removed, repoRoot+"::"+path)
 	return nil
 }
+func (f *fakeGit) EnsureLocalExclude(string, string) error { return nil }
+
 func (f *fakeGit) IsDirty(path string) (bool, error) {
 	if f.dirtyByPath == nil {
 		return false, nil

@@ -169,6 +169,38 @@ func (g *Gateway) RemoveWorktree(repoRoot, path string, force bool) error {
 	return err
 }
 
+// EnsureLocalExclude appends pattern to the repository's info/exclude. Linked
+// worktrees resolve it to the shared exclude of the main repository, which Git
+// applies to untracked files only and never commits.
+func (g *Gateway) EnsureLocalExclude(worktreePath, pattern string) error {
+	out, err := g.run("", "-C", worktreePath, "rev-parse", "--git-path", "info/exclude")
+	if err != nil {
+		return err
+	}
+	excludePath := strings.TrimSpace(out)
+	if !filepath.IsAbs(excludePath) {
+		excludePath = filepath.Join(worktreePath, excludePath)
+	}
+	content := ""
+	if b, err := os.ReadFile(excludePath); err == nil {
+		content = string(b)
+		for _, line := range strings.Split(content, "\n") {
+			if strings.TrimSpace(line) == pattern {
+				return nil
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(excludePath), 0o755); err != nil {
+		return err
+	}
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	return os.WriteFile(excludePath, []byte(content+pattern+"\n"), 0o644)
+}
+
 func (g *Gateway) IsDirty(path string) (bool, error) {
 	out, err := g.run("", "-C", path, "status", "--porcelain")
 	if err != nil {

@@ -14,6 +14,9 @@ type GitPort interface {
 	SyncBaseBranch(repoRoot, baseBranch string) (string, error)
 	RemoveWorktree(repoRoot, path string, force bool) error
 	IsDirty(path string) (bool, error)
+	// EnsureLocalExclude adds pattern to the repository's local, never
+	// committed ignore file (.git/info/exclude) when it is not there yet.
+	EnsureLocalExclude(worktreePath, pattern string) error
 	DiscoverFlutterRepos(scope string) ([]domain.DiscoveredFlutterRepo, error)
 }
 

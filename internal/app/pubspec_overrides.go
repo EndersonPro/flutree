@@ -15,6 +15,10 @@ import (
 
 const overrideFileName = "pubspec_overrides.yaml"
 
+// overrideExcludePattern keeps the generated file out of commits without
+// touching the tracked .gitignore; anchored so it only matches the root file.
+const overrideExcludePattern = "/" + overrideFileName
+
 const emptyOverrideContent = "dependency_overrides:\n  {}\n"
 
 // overrideSet maps a package name to its dependency_overrides spec exactly as

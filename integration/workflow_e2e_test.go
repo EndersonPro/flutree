@@ -49,9 +49,7 @@ func TestE2EWorkspaceLifecycleCreateListAddRepoComplete(t *testing.T) {
 		t.Fatalf("after add-repo, list = %+v", rows)
 	}
 
-	// --force: add-repo leaves flutree-generated files in the root worktree,
-	// which complete counts as uncommitted changes (bug candidate B3).
-	runE2E(t, t.TempDir(), testEnv(ws.home), "complete", ws.name, "--yes", "--non-interactive", "--force").requireCode(t, 0)
+	runE2E(t, t.TempDir(), testEnv(ws.home), "complete", ws.name, "--yes", "--non-interactive").requireCode(t, 0)
 	if exists(ws.rootWT) {
 		t.Fatalf("expected root worktree %s to be removed", ws.rootWT)
 	}

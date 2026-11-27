@@ -6,7 +6,7 @@ Branch: `feat/e2e-suite` (stacked on `feat/cobra-migration`) · Delivery: `ask-o
 - S1 — "necesito implementar primordialmente pruebas e2e a la cli, no usar más test unitarios a menos que sean necesarios". New coverage is written as e2e tests that build and run the real `flutree` binary; unit tests only when e2e cannot reach the behavior. Documented as a contributor convention.
 - S2 — Cover the commands that lack e2e coverage today: `pubget`, `clean`, `complete` error paths, MCP tool calls (assumption: derived from the coverage map, not listed by the user).
 - S3 — "esos serán los que se ejecuten antes de cada PR que lance en local". User chose "Hook pre-push": a versioned `.githooks/pre-push` runs the e2e suite on every `git push`, enabled once with `git config core.hooksPath .githooks`.
-- S4 — "y corregir unos bugs" — first reported bug is S5; B3/B4 remain candidates until the user confirms them.
+- S4 — "y corregir unos bugs" — first reported bug is S5. User chose to fix "B3: complete" (not B4), with approach "Usar info/exclude (Recomendado)": flutree stops editing the tracked `.gitignore` and ignores `pubspec_overrides.yaml` through `.git/info/exclude`, so `complete` sees a fresh workspace as clean.
 - S5 — "Cuando creo un pubspec_override este no está teniendo en cuenta los overrides que ya existen en el pubspec principal, los ignora, debe tenerlos en cuenta al momento de crear el grafo de dependencias entre multirepos". The generated `pubspec_overrides.yaml` (create and add-repo) must carry every `dependency_overrides` entry of the root `pubspec.yaml` — version, `path`, `git`, `hosted` — with relative paths rebased so they still point at the same directory from the worktree; flutree's package worktree entries win on conflict.
 - S6 — "además de que necesito que agreguemos una prueba real o realizar pruebas de que el multirepo funcione". An e2e test resolves a generated multi-repo workspace with the real Dart SDK (`dart pub get` + `dart run`) and proves the root uses the package worktrees and the carried overrides; skipped only when `dart` is not on PATH.
 
@@ -16,7 +16,8 @@ Branch: `feat/e2e-suite` (stacked on `feat/cobra-migration`) · Delivery: `ask-o
 | --- | --- | --- | --- | --- |
 | T1 | S1, S2 | inline | done | 6d110e4, 7e32ef0 |
 | T2 | S3 | inline | done | 9fa5443 |
-| T3 | S5, S6 | inline | done | cbad141 + correction |
+| T3 | S5, S6 | inline | done | cbad141, 39e5678 |
+| T4 | S4 (B3) | inline | done | (B3 commit) |
 
 ## Log
 
@@ -37,3 +38,5 @@ Branch: `feat/e2e-suite` (stacked on `feat/cobra-migration`) · Delivery: `ask-o
 - L10 T3: RED — TestE2ECreateCarriesRootPubspecDependencyOverrides / TestE2EAddRepoCarries... (intl and git overrides dropped, shared path wrong) and TestE2ERealDartResolvesMultiRepoWorkspace (dart: "could not find package shared at \"../shared-fork\""). GREEN — override logic moved to internal/app/pubspec_overrides.go on yaml.v3: carries every override shape, rebases relative paths from the source repo to the worktree, precedence package worktrees > existing pubspec_overrides.yaml > pubspec.yaml. Real Dart test runs (not skipped) and passes. Removed 4 unit tests of the deleted line parser (behavior now covered end-to-end). `go test ./...` and scripts/e2e.sh green. Risk: item 5 (gopkg.in/yaml.v3 becomes a direct dependency).
 - L11 Verification of cbad141 (independent verifier): S6 pass; S5 partial. Blocker: in-repo path overrides (`path: packages/local`) were rebased to the source checkout, so the worktree copy was ignored (real dart printed `source-checkout`). Correction: keep paths that stay inside the source repo; surface the YAML parse cause in the error hint. RED → GREEN on TestE2EInRepoPathOverrideStaysInsideWorktree (real dart prints `worktree-copy`) and TestE2EMalformedRootPubspecReportsParseError; TestE2EAddRepoTwiceKeepsRebasedOverrides pins idempotence. Known, not fixed: a failed create leaves an empty container dir and branch behind (pre-existing rollback gap); plain `dependencies: path:` siblings are not rewritten (pre-existing).
 - L12 Review 9fa5443..39e5678 (medium, item 5 escalation): granted, approved, acknowledged.
+- L13 (2026-11-26, user): B3 selected ("B3: complete"); approach "Usar info/exclude (Recomendado)". B4 not selected — left open.
+- L14 T4: RED — TestE2ECreateKeepsTrackedGitignoreAndIgnoresOverrides, TestE2ECompleteFreshWorkspaceWithPackagesWithoutForce, TestE2ECompleteAfterAddRepoWithoutForce, lifecycle test without --force. GREEN — GitPort.EnsureLocalExclude writes the anchored `/pubspec_overrides.yaml` to `git rev-parse --git-path info/exclude` (shared by the repo's worktrees, untracked files only); removed ensureGitignoreContains and its 2 unit tests. TestE2ECompleteDirtyWorktreeNeedsForce still blocks real edits. Full suite and e2e gate green. Known: workspaces created by older flutree versions keep their modified .gitignore and still need --force once.
