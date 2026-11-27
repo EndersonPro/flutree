@@ -14,10 +14,11 @@ Branch: `feat/package-overrides` (stacked on `docs/readme-refresh`) · Delivery:
 
 | ID | Specs | Route | Status | Commit |
 | --- | --- | --- | --- | --- |
-| T1 | S2–S6 | delegated writer (context backstop) | in progress | — |
+| T1 | S2–S6 | delegated writer (context backstop) | done | 5a0a6a6 |
 
 ## Log
 
 - L1 (2026-11-27, user): "Creo que también me hace falta hacer override de los sub paquetes cuando hay dependencias entre sí, podríamos investigar eso ? A ver cómo lo manejamos dentro de flutree ?"
 - L2 Investigation (parent, real dart in scratch): overrides were written only in the root (create_service.go:246, add_repo_service.go:283) while `flutree pubget` runs pub get inside each package. Case A: pkg_b → pkg_a by path with a different source layout (`../../libs/pkg-a`) → `flutree pubget` fails: "could not find package pkg_a at \"../../libs/pkg-a\"". Case B: sibling layout works by coincidence. Case C: git (or hosted) dep → pkg-b worktree resolves pkg_a from the pub cache, not the pkg-a worktree. A hand-written package-level `pubspec_overrides.yaml` fixes it (`dart run` → `b+a@worktree`). Overrides for packages outside the graph are NOT ignored by pub (added to package_config), and an unexcluded file shows as `??` in the package repo.
 - L3 (2026-11-27, user): "Si" (implement as proposed, on by default).
+- L4 T1 (5a0a6a6): RED 9 tests on a base copy → GREEN; shared `renderOverrides` computes the root and each package file; transitive closure follows `dependencies`/`dev_dependencies` of the package and only `dependencies` of transitive nodes; root output byte-identical (existing override tests unchanged). Parent: suite green in both locales; QA scenario /tmp/tmp.nl88IDO7l8 — only pkg-b gets a file (`pkg_a: ../pkg-a`), repos clean, pubget and complete exit 0.
