@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.0](https://github.com/EndersonPro/flutree/compare/v2.0.0...v2.1.0) (2026-11-27)
+
+
+### Features
+
+* **overrides:** give each package worktree its own pubspec_overrides.yaml ([5a0a6a6](https://github.com/EndersonPro/flutree/commit/5a0a6a65fc853c9aad81274f03c0d183fac1bcc3))
+
+
+### Bug Fixes
+
+* **overrides:** ignore transitive members' dev_dependencies ([5d03bda](https://github.com/EndersonPro/flutree/commit/5d03bda5bf853427a598d69bc9ba92ffdc438cbe))
+
 ## [2.0.0](https://github.com/EndersonPro/flutree/compare/v1.1.1...v2.0.0) (2026-11-27)
 
 
