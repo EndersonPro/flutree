@@ -141,3 +141,51 @@ func TestRepoPathFailedCreateDeletesOnlyBranchesItCreated(t *testing.T) {
 		t.Fatalf("the container must be rolled back")
 	}
 }
+
+// A package base may be any commit-ish git accepts (tag, SHA), not only a branch.
+func TestRepoPathPackageBaseAcceptsTagAndSHA(t *testing.T) {
+	for _, kind := range []string{"tag", "sha"} {
+		t.Run(kind, func(t *testing.T) {
+			home := t.TempDir()
+			scope := filepath.Join(t.TempDir(), "ws")
+			initRepoWithPackageName(t, filepath.Join(scope, "app"), "app")
+			core := filepath.Join(scope, "core")
+			initRepoWithPackageName(t, core, "core")
+			base := "v1"
+			if kind == "tag" {
+				runGit(t, core, "tag", "v1")
+			} else {
+				base = strings.TrimSpace(runGit(t, core, "rev-parse", "HEAD"))
+			}
+			runE2E(t, filepath.Join(scope, "app"), testEnv(home), "create", "t-"+kind, "--scope", scope,
+				"--root-repo", "app", "--package", "core", "--package-base", "core="+base,
+				"--non-interactive", "--yes").requireCode(t, 0)
+			if !exists(filepath.Join(home, "Documents", "worktrees", "t-"+kind, "packages", "core", "pubspec.yaml")) {
+				t.Fatalf("expected package worktree created from %s %s", kind, base)
+			}
+		})
+	}
+}
+
+// A base that only exists as origin/<b> (no local branch, sync off) passes
+// the up-front check and must also be usable as the start point.
+func TestRepoPathPackageBaseOnlyOnOriginCreates(t *testing.T) {
+	home := t.TempDir()
+	scope := filepath.Join(t.TempDir(), "ws")
+	initRepoWithPackageName(t, filepath.Join(scope, "app"), "app")
+	core := filepath.Join(scope, "core")
+	initRepoWithPackageName(t, core, "core")
+	runGit(t, core, "checkout", "-b", "develop")
+	runGit(t, core, "push", "-u", "origin", "develop")
+	runGit(t, core, "checkout", "main")
+	runGit(t, core, "branch", "-D", "develop")
+	if out := runGit(t, core, "branch", "--list", "develop"); strings.TrimSpace(out) != "" {
+		t.Fatalf("setup: local develop must not exist")
+	}
+
+	runE2E(t, filepath.Join(scope, "app"), testEnv(home), "create", "t-origin", "--scope", scope,
+		"--root-repo", "app", "--package", "core", "--non-interactive", "--yes").requireCode(t, 0)
+	if !exists(filepath.Join(home, "Documents", "worktrees", "t-origin", "packages", "core", "pubspec.yaml")) {
+		t.Fatalf("expected package worktree created from origin/develop")
+	}
+}

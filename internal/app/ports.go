@@ -23,7 +23,8 @@ type GitPort interface {
 	// InspectFlutterRepo reports whether path itself is a Flutter repository,
 	// using the same rules and fields as DiscoverFlutterRepos.
 	InspectFlutterRepo(path string) (domain.DiscoveredFlutterRepo, bool, error)
-	// BaseBranchExists reports whether branch exists locally or on origin.
+	// BaseBranchExists reports whether base resolves to a commit locally
+	// (branch, tag, SHA) or as origin/<base>, without network access.
 	BaseBranchExists(repoRoot, branch string) (bool, error)
 	// DeleteBranch force-deletes a local branch (never a checked-out one).
 	DeleteBranch(repoRoot, branch string) error

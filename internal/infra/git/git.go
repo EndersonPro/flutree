@@ -37,11 +37,13 @@ func (g *Gateway) ListWorktrees(repoRoot string) ([]domain.GitWorktreeEntry, err
 }
 
 func (g *Gateway) CreateWorktree(repoRoot, path, branch, baseBranch string) error {
+	baseBranch, _ = g.resolveStartPoint(repoRoot, baseBranch)
 	_, err := g.run(repoRoot, "worktree", "add", "-b", branch, path, baseBranch)
 	return err
 }
 
 func (g *Gateway) CreateWorktreeNew(repoRoot, path, branch, startPoint string) error {
+	startPoint, _ = g.resolveStartPoint(repoRoot, startPoint)
 	if _, err := g.run(repoRoot, "worktree", "add", "--detach", path, startPoint); err != nil {
 		return err
 	}
@@ -285,21 +287,30 @@ func (g *Gateway) InspectFlutterRepo(path string) (domain.DiscoveredFlutterRepo,
 	return repo, ok, nil
 }
 
-// BaseBranchExists checks the local branch, the remote-tracking ref and, as a
-// last resort, origin itself.
-func (g *Gateway) BaseBranchExists(repoRoot, branch string) (bool, error) {
-	branch = strings.TrimSpace(branch)
-	if branch == "" {
-		return false, nil
+// BaseBranchExists reports whether base can be used as a start point: any
+// commit-ish git resolves locally (branch, tag, SHA) or origin/<base>. It never
+// touches the network, so it cannot hang offline.
+func (g *Gateway) BaseBranchExists(repoRoot, base string) (bool, error) {
+	_, ok := g.resolveStartPoint(repoRoot, strings.TrimSpace(base))
+	return ok, nil
+}
+
+// resolveStartPoint returns the ref to start a worktree from: base itself
+// when it resolves to a commit, else origin/<base> when that remote-tracking
+// ref exists. BaseBranchExists and worktree creation share it, so a base
+// that passes the up-front check is always usable as a start point.
+func (g *Gateway) resolveStartPoint(repoRoot, base string) (string, bool) {
+	if base == "" {
+		return base, false
 	}
-	if ok, err := g.BranchExists(repoRoot, branch); err != nil || ok {
-		return ok, err
+	if _, err := g.run(repoRoot, "rev-parse", "--verify", "--quiet", base+"^{commit}"); err == nil {
+		return base, true
 	}
-	if _, err := g.run(repoRoot, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+branch); err == nil {
-		return true, nil
+	remote := "origin/" + base
+	if _, err := g.run(repoRoot, "rev-parse", "--verify", "--quiet", "refs/remotes/"+remote+"^{commit}"); err == nil {
+		return remote, true
 	}
-	out, err := g.run(repoRoot, "ls-remote", "--heads", "origin", branch)
-	return err == nil && strings.TrimSpace(out) != "", nil
+	return base, false
 }
 
 // DeleteBranch force-deletes a local branch. Git refuses a checked-out branch.

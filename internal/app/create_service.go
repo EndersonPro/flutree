@@ -355,9 +355,12 @@ func (s *CreateService) createPlannedWorktree(target domain.PlannedWorktree, opt
 			return false, err
 		}
 		if remoteExists {
-			// Fetch and set up local branch from remote
+			// Fetch and set up local branch from remote. The branch did not
+			// exist locally before, so if sync created it and then failed it
+			// is still ours to delete on rollback.
 			if err := s.git.SyncBranchWithRemote(target.Repo.RepoRoot, target.Branch); err != nil {
-				return false, err
+				created, _ := s.git.BranchExists(target.Repo.RepoRoot, target.Branch)
+				return created, err
 			}
 			// Create worktree from the now-existing local branch; the local
 			// branch is ours from here on.

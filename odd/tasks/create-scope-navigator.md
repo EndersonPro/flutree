@@ -20,7 +20,7 @@ Branch: `feat/create-scope-navigator` (stacked on `feat/e2e-suite`) · Delivery:
 | ID | Specs | Route | Status | Commit |
 | --- | --- | --- | --- | --- |
 | T1 | S1–S6 | delegated writer (context backstop: long parent session) | done | 62434ec |
-| T2 | S7–S10 | delegated writer (context backstop) | done, verifying | (T2 commit) |
+| T2 | S7–S10 | delegated writer (context backstop) | done | 9fc3a77 + correction |
 
 ## Log
 
@@ -30,3 +30,4 @@ Branch: `feat/create-scope-navigator` (stacked on `feat/e2e-suite`) · Delivery:
 - L4 Real-terminal QA (tmux, sonnet) in /tmp/tmp.JSCOjhRBF3: all S1–S6 scenarios pass; found failed-create branch leak, Esc-cancels-in-subfolder (parent confirmed in create_wizard.go), no scanning feedback, unchecked `develop` default, 80×24 truncation. No terminal-reply garbage in a real terminal.
 - L5 (2026-11-26, user): S7 question "es posible que estén en directorios diferente, podemos escoger el proyecto root o main principal donde se crea el override ?"; answer to the proposed design: "Si, hazlo así".
 - L6 T2 (delegated writer, sonnet): RED 10 new tests → GREEN 17 Navigator/RepoPath tests; `go test ./...` 11 ok; e2e gate ok. `[flutter]` marker, Tab on a repo = direct root, ctrl+o "Add packages" on the packages step, `CreateInput.Repos`, path selectors (contain `/` or start with `~`/`.`), `BaseBranchExists` (local, origin ref, ls-remote), branch rollback via `DeleteBranch`, async "Scanning", Esc goes up, hint wrapping and left-shortened paths. Differential vs base: identical except a missing package base now fails up front (exit 2). Writer changed one existing unit test for the async scan. Risk: item 1 (rollback runs `git branch -D` on branches created in the run) and item 3 (GitPort + selectors) → independent verifier.
+- L7 Independent verifier (sonnet) on 9fc3a77: S10a met — rollback never deleted a pre-existing branch (user commits, --reuse-existing-branch, remote-only branch all safe); S9 met. Blockers in S10d: (1) tag/SHA package bases rejected (regression); (2) base only as origin/<b> with sync off passed the check but create used `develop` and failed mid-way. Correction (parent): one `resolveStartPoint` (commit-ish locally, else origin/<b>, no network) shared by BaseBranchExists and worktree creation; dropped the untimed `ls-remote`; a branch created by a failing remote sync now counts as ours for rollback. RED→GREEN: TestRepoPathPackageBaseAcceptsTagAndSHA, TestRepoPathPackageBaseOnlyOnOriginCreates. Blocker recheck on the verifier fixtures in /tmp/tmp.zXgp2hUmQi: both exit 0. Full suite and e2e gate green. Not done: root --base-branch is still not pre-checked (spec covers packages); non-Flutter path selectors keep the generic "Unknown package selector".
