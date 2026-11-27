@@ -289,6 +289,12 @@ func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, e
 		return domain.AddRepoResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to ignore pubspec_overrides.yaml in .git/info/exclude.", err.Error(), err)
 	}
 
+	packageOverrideResults, err := writePackageOverrides(s.git, overridePackages)
+	if err != nil {
+		rollback()
+		return domain.AddRepoResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to update package pubspec_overrides.yaml.", err.Error(), err)
+	}
+
 	workspacePackages := make([]domain.PlannedWorktree, 0, len(allPackages))
 	for _, pkg := range allPackages {
 		workspacePackages = append(workspacePackages, domain.PlannedWorktree{Path: pkg.Path})
@@ -311,6 +317,8 @@ func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, e
 		OverridePath:   overridePath,
 		SelectedBranch: rootRecord.Branch,
 		SDKSetup:       setupSDKs(s.sdk, s.sdkPref, targets),
+
+		PackageOverrides: packageOverrideResults,
 	}, nil
 }
 

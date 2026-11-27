@@ -2,7 +2,7 @@
 
 ## Install and run
 
-Homebrew install (macOS arm64):
+Homebrew install (macOS arm64). Linux and Windows users can use the release archives (with `checksums.txt`) or Scoop; see the README Installation section:
 
 ```bash
 brew tap EndersonPro/flutree
@@ -17,10 +17,10 @@ brew update
 brew upgrade flutree
 ```
 
-Build from source:
+Build from source (Go `>=1.25`):
 
 ```bash
-go build -o flutree ./cmd/flutree
+go build -o ./flutree ./cmd/flutree
 ./flutree --help
 ```
 
@@ -32,8 +32,10 @@ go test ./...
 
 ## Architecture support matrix
 
-- Supported Brew binary target: `darwin-arm64`.
-- Unsupported architecture (for example Intel macOS `x86_64`): build from source with Go.
+- Homebrew binary target: `darwin-arm64`.
+- Release archives: `linux-amd64`, `linux-arm64`, `macos-arm64`, `windows-amd64`, `windows-arm64`.
+- Scoop (Windows) installs the Windows archives.
+- Anything else (for example Intel macOS `x86_64`): build from source with Go.
 
 ## Command Summary
 
@@ -83,13 +85,13 @@ go test ./...
 ## create
 
 Options:
-- `--branch, -b TEXT`: target branch name for the root worktree. If omitted, defaults to `feature/<normalized-name>`.
+- `--branch TEXT`: target branch name for the root worktree. If omitted, defaults to `feature/<normalized-name>`.
 - `--base-branch TEXT`: source branch for root worktree creation (default: `main`).
 - `--scope PATH`: execution directory scope used to discover Flutter repositories (default: current directory).
   - if omitted, `create` uses persisted `scope.root` when configured.
 - `--root-repo TEXT`: explicit root repository selector for non-interactive usage. Accepts a repository name, package name, or a path (absolute, `~`, or relative to the current directory) to a Flutter repository, even outside `--scope`.
 - `--no-package`: explicit root-only mode; skip package selection and package metadata prompts.
-- `--package, -p TEXT`: explicit package repository selector (repeatable); accepts the same name or path forms as `--root-repo`.
+- `--package TEXT`: explicit package repository selector (repeatable); accepts the same name or path forms as `--root-repo`.
 - `--package-base TEXT`: per-package base branch override in `<selector>=<branch>` format (repeatable, default `develop`). Every package base branch must exist locally or on `origin`; otherwise `create` fails before changing anything with `Base branch '<b>' does not exist in <repo>.` (hint `Pass --package-base <repo>=<branch>.`, exit code 2).
 - `--workspace/--no-workspace`: enable or disable VSCode `.code-workspace` generation (enabled by default).
 - `--yes`: acknowledge dry plan automatically only when `--non-interactive` is enabled.
@@ -132,10 +134,16 @@ Generated worktrees are grouped into:
 - packages: `~/Documents/worktrees/<worktree-name-slug>/packages/<package-repo-folder>/`
 
 Package override output:
-- `flutree create` writes exactly one `pubspec_overrides.yaml` in the selected root worktree when at least one package is selected; root-only workspaces (`--no-package`) get no override file.
+- `flutree create` writes one `pubspec_overrides.yaml` in the selected root worktree when at least one package is selected; root-only workspaces (`--no-package`) get no override file.
   - It keeps every `dependency_overrides` entry already declared in the root `pubspec.yaml` (version, `path`, `git`, `hosted`), because a `pubspec_overrides.yaml` replaces those instead of merging with them. Relative paths that point outside the repository are rebased so they still resolve from the worktree; selected package worktrees win on conflict.
   - The file is ignored through `.git/info/exclude` (never committed); the tracked `.gitignore` is not modified.
 - dependency paths target selected package worktree paths.
+- Each selected package worktree also gets its own `pubspec_overrides.yaml`, because `flutree pubget` resolves inside every package and pub only reads the overrides of the package it resolves.
+  - It points every selected package that package depends on, directly or through other selected packages, at that package's worktree. Any dependency spec counts (`path`, `git`, hosted or version). It never lists the package itself or selected packages outside its graph; paths are relative to the package worktree.
+  - It carries the package's own `dependency_overrides` with the same rules as the root file (relative paths that leave the repository are rebased, paths inside the repository are kept). Precedence: selected worktrees, then entries already in the file (your edits survive), then the package's own overrides, then derived path dependencies.
+  - A package that needs no entry gets no file. A package that uses Dart pub workspaces (`resolution: workspace`) is skipped; the result reports a `skipped` entry with a note.
+  - Each file is ignored through that package repository's `.git/info/exclude`, so the worktree stays clean and `complete` works without `--force`.
+  - `create` and `add-repo` report them in the `package_overrides` list of the `--json` result (`{repo, path, status, note?}` with status `written`, `unchanged` or `skipped`). `add-repo` regenerates the files of all package worktrees, since a new package can be a dependency of existing ones.
 - `pubspec.yaml` is never modified by this workflow.
 
 VSCode workspace output (MVP):
@@ -205,12 +213,11 @@ Exit code contract:
 - `1` operational/precondition/process/git/update failure
 - `2` input/cancel errors (invalid args, declined confirmation, missing explicit non-interactive confirmation)
 
-By default, unexpected errors are hidden behind a concise message.
-Use `--debug` to surface internal exception details.
+Unexpected errors are reported as a concise `[unexpected] Command failed.` message.
 
 ## Go version compatibility
 
-`flutree` source builds require Go `>=1.22`.
+`flutree` source builds require Go `>=1.25` (see `go.mod`).
 
 ## Failure Remediation
 
@@ -259,20 +266,41 @@ flutree add-repo feature-login --scope ~/code --repo core-pkg --sync-policy neve
 
 ## config
 
-Supported key:
+Supported keys:
 - `scope.root`: default discovery root for `create` and `add-repo`.
+- `workspace.generate`: `true`/`false` (default `true`); whether `create` writes the VSCode `.code-workspace` when neither `--workspace` nor `--no-workspace` is passed.
+- `sdk.manager`: `auto`/`fvm`/`puro`/`none` (default `auto`); Flutter SDK manager run in every new worktree.
 
 Examples:
 
 ```bash
 flutree config set scope.root ~/code
 flutree config get scope.root
+flutree config set workspace.generate false
+flutree config set sdk.manager fvm
 ```
 
 Persistence file:
 - `~/Documents/worktrees/.flutree_config.json`
-- JSON schema v1:
 
-```json
-{ "version": 1, "scope": { "root": "/absolute/path" } }
-```
+The file stores the keys above; inspect individual values with `flutree config get <key>`.
+
+## clean
+
+Cleans the current managed worktree (the one containing the current directory).
+
+Options:
+- `--force`: also remove `pubspec.lock`.
+
+## mcp
+
+AI agent integration over the Model Context Protocol. See the README section "Set up flutree for your AI agent (MCP)" and [mcp.md](mcp.md).
+
+- `flutree mcp serve`: start the stdio MCP server (clients launch it; do not pass `--json`).
+- `flutree mcp install [--client NAMES] [--scope user|project] [--dry-run] [--force]`: write the flutree entry into detected AI clients.
+- `flutree mcp uninstall [--client NAMES] [--scope user|project] [--dry-run]`: remove only the flutree entry.
+- `flutree mcp doctor [--scope user|project]`: diagnose binary, client entries and a live handshake; exits `1` on `[ERR]`.
+
+## completion
+
+`flutree completion <bash|zsh|fish|powershell>` prints a shell completion script.

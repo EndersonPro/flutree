@@ -130,7 +130,7 @@ that every package base branch exists, then returns the plan.
   - `branch` (default `feature/<name>`), `generate_workspace` (default: the `workspace.generate` config), `copy_root_files` (extra patterns; `.env` and `.env.*` are always copied).
 - Selectors (`root_repo`, `packages`) are a folder name, a package name or a path (absolute, `~`, or relative to the server's working directory), as in the CLI.
 - Missing decisions are `input` errors whose hint tells the agent to ask the user: a missing `base_branch` or a package without a `package_base` entry is never defaulted.
-- Result: `{name, container_path, root, packages[], override_path, override_content, workspace_file, workspace_folders, copy_root_files, notes?}` where `root` and each package are `{role, repo_name, package_name, repo_root, path, branch, base_branch}`.
+- Result: `{name, container_path, root, packages[], override_path, override_content, package_overrides?, workspace_file, workspace_folders, copy_root_files, notes?}` where `root` and each package are `{role, repo_name, package_name, repo_root, path, branch, base_branch}`. `package_overrides` lists, for each package worktree that needs a `pubspec_overrides.yaml`, `{repo, path, content, note?}` (a package that uses Dart pub workspaces is listed with a `note` and no `content`).
 - No directory, branch, worktree or registry entry is created. (Like every flutree command, reading the configuration may create the default config file.)
 
 ### create_workspace
@@ -154,7 +154,7 @@ Read-only state of one workspace.
 - Arguments: `name` (required).
 - Result: `{name, branch, status, container_path, workspace_file?, root, packages[], pubspec_overrides}`.
   `root` and each package are `{name, role, path, repo_root, branch, exists, dirty, base_branch?, ahead?, behind?, ahead_behind_note?}`;
-  `pubspec_overrides` is `{path, exists, entries: {<package>: <spec>}}`.
+  `pubspec_overrides` is `{path, exists, entries: {<package>: <spec>}}`. Each package also carries its own `pubspec_overrides` with the same shape, so the agent can see whether its override file exists.
 - `ahead` / `behind` compare each worktree `HEAD` with the base it was created from (`git rev-list --left-right --count <base>...HEAD`): `ahead` is the commits only in the worktree, `behind` the commits only in the base. The base is stored in the registry as the optional `base_branch` field and resolved like at creation (a local commit-ish, else `origin/<base>`).
 - Worktrees created before the base was stored, or whose base no longer resolves, omit `ahead`/`behind` and carry a short `ahead_behind_note`. The status never fails because of it.
 - Errors: `precondition` when the workspace is not registered.

@@ -82,6 +82,9 @@ type WorktreeStatus struct {
 	Branch   string `json:"branch"`
 	Exists   bool   `json:"exists"`
 	Dirty    bool   `json:"dirty"`
+	// Overrides describes the pubspec_overrides.yaml of a package worktree; it
+	// is omitted for the root, whose file is WorkspaceStatus.Overrides.
+	Overrides *OverridesInfo `json:"pubspec_overrides,omitempty"`
 	// BaseBranch, Ahead and Behind compare the worktree HEAD with the base it
 	// was created from. They are omitted when the registry has no base or the
 	// base no longer resolves; AheadBehindNote then says why.
@@ -279,14 +282,34 @@ type PlannedWorktree struct {
 	BaseBranch string
 }
 
+// PackageOverridePlan is the pubspec_overrides.yaml a package worktree will get.
+// Content is empty when the package is skipped; Note says why.
+type PackageOverridePlan struct {
+	Repo    string `json:"repo"`
+	Path    string `json:"path"`
+	Content string `json:"content,omitempty"`
+	Note    string `json:"note,omitempty"`
+}
+
+// PackageOverrideResult reports what happened to the pubspec_overrides.yaml of
+// one package worktree: written, unchanged or skipped (with a note).
+type PackageOverrideResult struct {
+	Repo   string `json:"repo"`
+	Path   string `json:"path"`
+	Status string `json:"status"`
+	Note   string `json:"note,omitempty"`
+}
+
 type CreateDryPlan struct {
-	NormalizedName   string
-	ContainerPath    string
-	Root             PlannedWorktree
-	Packages         []PlannedWorktree
-	RootFiles        []string
-	OverridePath     string
-	OverrideContent  string
+	NormalizedName  string
+	ContainerPath   string
+	Root            PlannedWorktree
+	Packages        []PlannedWorktree
+	RootFiles       []string
+	OverridePath    string
+	OverrideContent string
+	// PackageOverrides are the override files of the package worktrees.
+	PackageOverrides []PackageOverridePlan
 	WorkspacePath    string
 	WorkspaceFolders []string
 }
@@ -303,6 +326,8 @@ type CreateResult struct {
 	SelectedPackages []string         `json:"selected_packages"`
 	WorkspacePath    string           `json:"workspace_path"`
 	SDKSetup         []SDKSetupResult `json:"sdk_setup,omitempty"`
+	// PackageOverrides reports the pubspec_overrides.yaml of each package worktree.
+	PackageOverrides []PackageOverrideResult `json:"package_overrides,omitempty"`
 }
 
 type AddRepoSyncPolicy string
@@ -331,6 +356,8 @@ type AddRepoResult struct {
 	OverridePath   string           `json:"override_path"`
 	SelectedBranch string           `json:"selected_branch"`
 	SDKSetup       []SDKSetupResult `json:"sdk_setup,omitempty"`
+	// PackageOverrides reports the pubspec_overrides.yaml of each package worktree.
+	PackageOverrides []PackageOverrideResult `json:"package_overrides,omitempty"`
 }
 
 type UpdateInput struct {

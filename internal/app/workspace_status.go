@@ -171,20 +171,30 @@ func (s *InspectService) WorkspaceStatus(name string) (domain.WorkspaceStatus, e
 		status.WorkspaceFile = workspaceFile
 	}
 
-	overridePath := filepath.Join(root.Path, overrideFileName)
-	status.Overrides = domain.OverridesInfo{Path: overridePath, Entries: map[string]any{}}
+	status.Overrides = readOverridesInfo(filepath.Join(root.Path, overrideFileName))
+	for i := range status.Packages {
+		info := readOverridesInfo(filepath.Join(status.Packages[i].Path, overrideFileName))
+		status.Packages[i].Overrides = &info
+	}
+	return status, nil
+}
+
+// readOverridesInfo reports whether a pubspec_overrides.yaml exists and its
+// parsed entries.
+func readOverridesInfo(overridePath string) domain.OverridesInfo {
+	info := domain.OverridesInfo{Path: overridePath, Entries: map[string]any{}}
 	if _, err := os.Stat(overridePath); err == nil {
-		status.Overrides.Exists = true
+		info.Exists = true
 		if set, err := readOverridesSection(overridePath); err == nil {
 			for pkg, node := range set {
 				var spec any
 				if node.Decode(&spec) == nil {
-					status.Overrides.Entries[pkg] = spec
+					info.Entries[pkg] = spec
 				}
 			}
 		}
 	}
-	return status, nil
+	return info
 }
 
 func (s *InspectService) worktreeStatus(rec domain.RegistryRecord, role string) domain.WorktreeStatus {
