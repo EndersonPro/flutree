@@ -236,7 +236,17 @@ Usage:
 flutree config set scope.root <path>
 flutree config get scope.root
 flutree config set workspace.generate false
+flutree config set sdk.manager fvm
 ```
+
+#### SDK setup
+
+After `create` and `add-repo` create worktrees, flutree prepares the Flutter SDK in the root and every package worktree so you do not have to run your SDK manager in each one:
+
+- **fvm**: reads `.fvmrc` (`"flutter"`) or the legacy `.fvm/fvm_config.json`, then runs `fvm use <version> --force --skip-pub-get`.
+- **puro**: reads `.puro.json` (`"env"`) — from the source repository too, since puro gitignores it — then runs `puro use <env>`.
+- `sdk.manager auto` (default) uses fvm when the repo pins an fvm version, otherwise puro. `fvm`/`puro` force one manager; `none` disables the step.
+- Repos without a pin are skipped. If the manager fails, the worktree is kept, a `[warning]` is printed on stderr and `sdk_setup` in `--json` output reports `failed` with the reason.
 
 Supported keys:
 
@@ -244,6 +254,7 @@ Supported keys:
 |-----|-------------|
 | `scope.root` | Default discovery root used by `create` and `add-repo` when `--scope` is omitted |
 | `workspace.generate` | `true`/`false` (default `true`): whether `create` writes the VSCode `.code-workspace` when neither `--workspace` nor `--no-workspace` is passed. Explicit flags always win. |
+| `sdk.manager` | `auto`/`fvm`/`puro`/`none` (default `auto`): Flutter SDK manager that `create` and `add-repo` run in every new worktree. See [SDK setup](#sdk-setup). |
 
 ### list
 

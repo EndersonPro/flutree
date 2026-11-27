@@ -18,10 +18,13 @@ func newConfigCmd() *cobra.Command {
 Supported keys:
   scope.root           Default discovery root for create/add-repo when --scope is omitted
   workspace.generate   Whether create writes a VSCode .code-workspace when neither
-                       --workspace nor --no-workspace is passed (true|false, default true)`,
+                       --workspace nor --no-workspace is passed (true|false, default true)
+  sdk.manager          Flutter SDK manager run in every new worktree: auto|fvm|puro|none
+                       (default auto: fvm when the repo pins a version, else puro)`,
 		Example: `  flutree config set scope.root <path>
   flutree config get scope.root
-  flutree config set workspace.generate false`,
+  flutree config set workspace.generate false
+  flutree config set sdk.manager fvm`,
 		Args: noUnknownSubcommand,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()

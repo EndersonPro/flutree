@@ -20,6 +20,14 @@ type GitPort interface {
 	DiscoverFlutterRepos(scope string) ([]domain.DiscoveredFlutterRepo, error)
 }
 
+// SDKPort reads Flutter SDK pins and runs the SDK manager in a worktree.
+type SDKPort interface {
+	// Pins reads the pins declared in the worktree, falling back to the source
+	// repository for files that are not committed (puro gitignores its own).
+	Pins(worktreePath, sourceRepoRoot string) (domain.SDKPins, error)
+	Use(worktreePath string, manager domain.SDKManager, version string) error
+}
+
 type RegistryPort interface {
 	ListRecords() ([]domain.RegistryRecord, error)
 	Get(name string) (domain.RegistryRecord, error)

@@ -14,6 +14,7 @@ import (
 	"github.com/EndersonPro/flutree/internal/infra/prompt"
 	infraPub "github.com/EndersonPro/flutree/internal/infra/pub"
 	"github.com/EndersonPro/flutree/internal/infra/registry"
+	infraSDK "github.com/EndersonPro/flutree/internal/infra/sdk"
 	"github.com/spf13/cobra"
 )
 
@@ -50,14 +51,15 @@ func newMCPServeCmd() *cobra.Command {
 				)
 			}
 			configRepo := infraConfig.NewDefault()
+			configService := app.NewConfigService(configRepo)
 			services := infraMCP.MCPServices{
 				List:     app.NewListService(&infraGit.Gateway{}, registry.NewDefault()),
-				Create:   app.NewCreateService(&infraGit.Gateway{}, registry.NewDefault(), prompt.New()),
-				AddRepo:  app.NewAddRepoService(&infraGit.Gateway{}, registry.NewDefault(), prompt.New()),
+				Create:   app.NewCreateService(&infraGit.Gateway{}, registry.NewDefault(), prompt.New()).WithSDK(&infraSDK.Gateway{}, configService.SDKManager),
+				AddRepo:  app.NewAddRepoService(&infraGit.Gateway{}, registry.NewDefault(), prompt.New()).WithSDK(&infraSDK.Gateway{}, configService.SDKManager),
 				Complete: app.NewCompleteService(&infraGit.Gateway{}, registry.NewDefault(), prompt.New()),
 				PubGet:   app.NewPubGetService(registry.NewDefault(), &infraPub.Gateway{}),
 				Clean:    app.NewCleanService(&infraGit.Gateway{}, registry.NewDefault(), &infraPub.Gateway{}),
-				Config:   app.NewConfigService(configRepo),
+				Config:   configService,
 			}
 			srv, err := infraMCP.BuildServer(displayVersion(), services)
 			if err != nil {

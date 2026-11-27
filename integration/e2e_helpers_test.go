@@ -68,7 +68,7 @@ func (r e2eResult) requireCode(t *testing.T, want int) {
 	}
 }
 
-// fakeToolchain installs fake `flutter` and `dart` executables that append one
+// fakeToolchain installs fake `flutter`, `dart`, `fvm` and `puro` executables that append one
 // line per invocation ("<tool> <args> @ <cwd>") to a log file. Set exitCode to
 // make every invocation fail.
 type fakeToolchain struct {
@@ -83,7 +83,7 @@ func newFakeToolchain(t *testing.T, exitCode int) fakeToolchain {
 	if err := os.MkdirAll(tc.binDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, tool := range []string{"flutter", "dart"} {
+	for _, tool := range []string{"flutter", "dart", "fvm", "puro"} {
 		script := fmt.Sprintf("#!/bin/sh\necho \"%s $* @ $(pwd -P)\" >> %q\n", tool, tc.log)
 		if exitCode != 0 {
 			script += fmt.Sprintf("echo \"%s failed\" >&2\nexit %d\n", tool, exitCode)

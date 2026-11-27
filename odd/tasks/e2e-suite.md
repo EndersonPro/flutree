@@ -13,7 +13,7 @@ Branch: `feat/e2e-suite` (stacked on `feat/cobra-migration`) · Delivery: `ask-o
 - S7 — "Avoid creating empty override files when no packages are needed." `create` without packages writes no `pubspec_overrides.yaml` (the root pubspec's own overrides already apply) and the dry plan does not list it.
 - S8 — "When packages are needed, respect current overrides and add new ones." Covered by S5 (cbad141, 39e5678).
 - S9 — "Global flag to auto-create yscade workspace." User clarified: "VSCode, config global" — persisted `flutree config set workspace.generate true|false`; precedence: explicit `--workspace`/`--no-workspace` > config > default true. Assumption: MCP `create_worktree` keeps its explicit `generate_workspace` argument (default false) unchanged; MCP `get_config`/`set_config` accept the new key.
-- S10 — "Auto-inject sdk version for each package and root to avoid run puro/tym in each one. (Maybe set a global choice to select the preferred SDK manager)" Details pending clarification.
+- S10 — "Auto-inject sdk version for each package and root to avoid run puro/tym in each one. (Maybe set a global choice to select the preferred SDK manager)". User chose "Ejecutar el gestor (Recomendado)": after create/add-repo create worktrees, flutree reads each repo's pin (`.fvmrc` / legacy `.fvm/fvm_config.json`, `.puro.json` — worktree first, then source repo, since puro gitignores its file) and runs `fvm use <version> --force --skip-pub-get` or `puro use <env>` in the root and every package worktree. `flutree config set sdk.manager auto|fvm|puro|none` (default auto: fvm when pinned, else puro). Assumptions: a manager failure keeps the worktrees and is reported per repo (`sdk_setup` in results, also JSON) instead of rolling back; MCP create/add-repo run the same setup.
 
 ## Tasks
 
@@ -24,8 +24,8 @@ Branch: `feat/e2e-suite` (stacked on `feat/cobra-migration`) · Delivery: `ask-o
 | T3 | S5, S6 | inline | done | cbad141, 39e5678 |
 | T4 | S4 (B3) | inline | done | 3d5e423 |
 | T5 | S7 | inline | done | 5ac51e7 |
-| T6 | S9 | inline | done | (S9 commit) |
-| T7 | S10 | — | blocked (clarify SDK injection) | — |
+| T6 | S9 | inline | done | 47a6b54 |
+| T7 | S10 | inline | done | (S10 commit) |
 
 ## Log
 
@@ -53,3 +53,5 @@ Branch: `feat/e2e-suite` (stacked on `feat/cobra-migration`) · Delivery: `ask-o
 - L17 T5: RED on TestCreateNoPackageCreatesRootOnlyArtifacts (file existed). GREEN — BuildDryPlan leaves OverridePath/OverrideContent empty without packages, Apply skips the write and the exclude, the dry plan hides "Planned Files" when empty. Override e2e tests that relied on --no-package now select a package; removed the conditional guard flagged by review (R3-001). Full suite and e2e gate green.
 - L18 (2026-11-26, user): "yscade" = "VSCode, config global".
 - L19 T6: RED on 4 of 5 create cases, config round trip, non-boolean rejection, MCP set_config. GREEN — `ConfigService.Set/Get` dispatch by key (`scope.root`, `workspace.generate`); `GenerateWorkspace()` defaults to true; create reads it only when neither workspace flag changed; MCP config tools use Set/Get. Unsupported-key hint now lists both keys. Full suite and e2e gate green.
+- L20 (2026-11-26, user): SDK approach "Ejecutar el gestor (Recomendado)". Evidence: fvm 4.3.2 `fvm use {version}` flags `--force`, `--skip-pub-get`, `--skip-setup`; puro docs: `puro use <env>` acts on the current project, writes `.puro.json` (`"env"`) and "is automatically gitignored".
+- L21 T7: RED on 8 SDK e2e tests (fake fvm/puro record calls and cwd). GREEN — `SDKPort` + `internal/infra/sdk` (pins from worktree then source repo; `fvm use <v> --force --skip-pub-get`, `puro use <env>`); policy in `app/sdk_setup.go` (auto prefers fvm); services get it via `WithSDK(port, preference)` reading `sdk.manager` on every run (MCP included); failures keep worktrees, warn on stderr, and report `sdk_setup` in results. Full suite and e2e gate green. Not covered: a real fvm/puro run (would need a cached SDK).

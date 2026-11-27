@@ -55,6 +55,38 @@ type UserConfigDocument struct {
 	Version   int                 `json:"version"`
 	Scope     UserScopeConfig     `json:"scope"`
 	Workspace UserWorkspaceConfig `json:"workspace"`
+	SDK       UserSDKConfig       `json:"sdk"`
+}
+
+// UserSDKConfig holds the preferred Flutter SDK manager. Empty means auto.
+type UserSDKConfig struct {
+	Manager SDKManager `json:"manager,omitempty"`
+}
+
+// SDKManager selects which Flutter SDK manager prepares new worktrees.
+type SDKManager string
+
+const (
+	SDKManagerAuto SDKManager = "auto"
+	SDKManagerFVM  SDKManager = "fvm"
+	SDKManagerPuro SDKManager = "puro"
+	SDKManagerNone SDKManager = "none"
+)
+
+// SDKPins are the SDK versions a repository declares for each manager.
+type SDKPins struct {
+	FVMVersion string
+	PuroEnv    string
+}
+
+// SDKSetupResult reports how the SDK was prepared in one worktree.
+type SDKSetupResult struct {
+	Repo    string `json:"repo"`
+	Path    string `json:"path"`
+	Manager string `json:"manager"`
+	Version string `json:"version"`
+	Status  string `json:"status"` // configured | failed
+	Message string `json:"message,omitempty"`
 }
 
 // UserWorkspaceConfig holds persisted defaults for the generated VSCode
@@ -180,10 +212,11 @@ type CreateApplyOptions struct {
 }
 
 type CreateResult struct {
-	Record           RegistryRecord `json:"record"`
-	NextStep         string         `json:"next_step"`
-	SelectedPackages []string       `json:"selected_packages"`
-	WorkspacePath    string         `json:"workspace_path"`
+	Record           RegistryRecord   `json:"record"`
+	NextStep         string           `json:"next_step"`
+	SelectedPackages []string         `json:"selected_packages"`
+	WorkspacePath    string           `json:"workspace_path"`
+	SDKSetup         []SDKSetupResult `json:"sdk_setup,omitempty"`
 }
 
 type AddRepoSyncPolicy string
@@ -207,10 +240,11 @@ type AddRepoInput struct {
 }
 
 type AddRepoResult struct {
-	WorkspaceName  string   `json:"workspace_name"`
-	AddedRepos     []string `json:"added_repos"`
-	OverridePath   string   `json:"override_path"`
-	SelectedBranch string   `json:"selected_branch"`
+	WorkspaceName  string           `json:"workspace_name"`
+	AddedRepos     []string         `json:"added_repos"`
+	OverridePath   string           `json:"override_path"`
+	SelectedBranch string           `json:"selected_branch"`
+	SDKSetup       []SDKSetupResult `json:"sdk_setup,omitempty"`
 }
 
 type UpdateInput struct {

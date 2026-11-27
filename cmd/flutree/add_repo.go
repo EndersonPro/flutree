@@ -9,6 +9,7 @@ import (
 	infraGit "github.com/EndersonPro/flutree/internal/infra/git"
 	"github.com/EndersonPro/flutree/internal/infra/prompt"
 	"github.com/EndersonPro/flutree/internal/infra/registry"
+	infraSDK "github.com/EndersonPro/flutree/internal/infra/sdk"
 	"github.com/EndersonPro/flutree/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -71,7 +72,8 @@ func runAddRepo(cmd *cobra.Command, workspaceName string, opts *addRepoOptions) 
 
 	repos := opts.repos
 	nonInteractive := opts.nonInteractive
-	service := app.NewAddRepoService(&infraGit.Gateway{}, registry.NewDefault(), prompt.New())
+	service := app.NewAddRepoService(&infraGit.Gateway{}, registry.NewDefault(), prompt.New()).
+		WithSDK(&infraSDK.Gateway{}, app.NewConfigService(infraConfig.NewDefault()).SDKManager)
 	if ui.SupportsInteractiveWizard() && !nonInteractive && len(repos) == 0 {
 		selectionContext, err := service.BuildSelectionContext(app.AddRepoSelectionContextInput{
 			WorkspaceName:  workspaceName,

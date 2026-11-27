@@ -9,6 +9,7 @@ import (
 	infraGit "github.com/EndersonPro/flutree/internal/infra/git"
 	"github.com/EndersonPro/flutree/internal/infra/prompt"
 	"github.com/EndersonPro/flutree/internal/infra/registry"
+	infraSDK "github.com/EndersonPro/flutree/internal/infra/sdk"
 	"github.com/EndersonPro/flutree/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -99,7 +100,8 @@ func runCreate(cmd *cobra.Command, name string, opts *createOptions) error {
 
 	gitGateway := &infraGit.Gateway{}
 	promptAdapter := prompt.New()
-	service := app.NewCreateService(gitGateway, registry.NewDefault(), promptAdapter)
+	service := app.NewCreateService(gitGateway, registry.NewDefault(), promptAdapter).
+		WithSDK(&infraSDK.Gateway{}, app.NewConfigService(configRepo).SDKManager)
 
 	createInput := domain.CreateInput{
 		Name:              name,

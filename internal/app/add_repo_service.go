@@ -13,6 +13,16 @@ type AddRepoService struct {
 	git      GitPort
 	registry RegistryPort
 	prompt   PromptPort
+	sdk      SDKPort
+	sdkPref  func() (domain.SDKManager, error)
+}
+
+// WithSDK enables SDK manager setup (fvm/puro) for attached worktrees.
+// preference is read on every run so a changed sdk.manager applies at once.
+func (s *AddRepoService) WithSDK(sdk SDKPort, preference func() (domain.SDKManager, error)) *AddRepoService {
+	s.sdk = sdk
+	s.sdkPref = preference
+	return s
 }
 
 type AddRepoSelectionContextInput struct {
@@ -253,14 +263,17 @@ func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, e
 	}
 
 	added := make([]string, 0, len(newPlans))
+	targets := make([]sdkTarget, 0, len(newPlans))
 	for _, plan := range newPlans {
 		added = append(added, plan.Repo.Name)
+		targets = append(targets, sdkTarget{repo: plan.Repo.Name, path: plan.Path, sourceRoot: plan.Repo.RepoRoot})
 	}
 	return domain.AddRepoResult{
 		WorkspaceName:  rootRecord.Name,
 		AddedRepos:     added,
 		OverridePath:   overridePath,
 		SelectedBranch: rootRecord.Branch,
+		SDKSetup:       setupSDKs(s.sdk, s.sdkPref, targets),
 	}, nil
 }
 

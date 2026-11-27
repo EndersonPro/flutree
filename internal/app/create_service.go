@@ -15,6 +15,16 @@ type CreateService struct {
 	git      GitPort
 	registry RegistryPort
 	prompt   PromptPort
+	sdk      SDKPort
+	sdkPref  func() (domain.SDKManager, error)
+}
+
+// WithSDK enables SDK manager setup (fvm/puro) for created worktrees.
+// preference is read on every run so a changed sdk.manager applies at once.
+func (s *CreateService) WithSDK(sdk SDKPort, preference func() (domain.SDKManager, error)) *CreateService {
+	s.sdk = sdk
+	s.sdkPref = preference
+	return s
 }
 
 func NewCreateService(git GitPort, registry RegistryPort, prompt PromptPort) *CreateService {
@@ -223,14 +233,17 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 	}
 
 	selected := make([]string, 0, len(plan.Packages))
+	targets := []sdkTarget{{repo: plan.Root.Repo.Name, path: plan.Root.Path, sourceRoot: plan.Root.Repo.RepoRoot}}
 	for _, pkg := range plan.Packages {
 		selected = append(selected, pkg.Repo.PackageName)
+		targets = append(targets, sdkTarget{repo: pkg.Repo.Name, path: pkg.Path, sourceRoot: pkg.Repo.RepoRoot})
 	}
 	return domain.CreateResult{
 		Record:           rootRecord,
 		NextStep:         "cd " + plan.Root.Path,
 		SelectedPackages: selected,
 		WorkspacePath:    plan.WorkspacePath,
+		SDKSetup:         setupSDKs(s.sdk, s.sdkPref, targets),
 	}, nil
 }
 

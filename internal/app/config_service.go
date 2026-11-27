@@ -12,9 +12,10 @@ import (
 const (
 	scopeRootKey         = "scope.root"
 	workspaceGenerateKey = "workspace.generate"
+	sdkManagerKey        = "sdk.manager"
 )
 
-const supportedKeysHint = "Supported keys: scope.root, workspace.generate."
+const supportedKeysHint = "Supported keys: scope.root, workspace.generate, sdk.manager."
 
 type ConfigService struct {
 	config ConfigPort
@@ -46,6 +47,23 @@ func (s *ConfigService) Set(key, value string) (string, error) {
 			return "", err
 		}
 		return strconv.FormatBool(enabled), nil
+	case sdkManagerKey:
+		manager, err := parseSDKManager(value)
+		if err != nil {
+			return "", err
+		}
+		doc, err := s.config.Load()
+		if err != nil {
+			return "", err
+		}
+		if doc.Version == 0 {
+			doc.Version = 1
+		}
+		doc.SDK.Manager = manager
+		if err := s.config.Save(doc); err != nil {
+			return "", err
+		}
+		return string(manager), nil
 	default:
 		return "", unsupportedKeyError(key)
 	}
@@ -62,8 +80,35 @@ func (s *ConfigService) Get(key string) (string, error) {
 			return "", err
 		}
 		return strconv.FormatBool(enabled), nil
+	case sdkManagerKey:
+		manager, err := s.SDKManager()
+		if err != nil {
+			return "", err
+		}
+		return string(manager), nil
 	default:
 		return "", unsupportedKeyError(key)
+	}
+}
+
+// SDKManager returns the preferred SDK manager for new worktrees (default auto).
+func (s *ConfigService) SDKManager() (domain.SDKManager, error) {
+	doc, err := s.config.Load()
+	if err != nil {
+		return "", err
+	}
+	if doc.SDK.Manager == "" {
+		return domain.SDKManagerAuto, nil
+	}
+	return doc.SDK.Manager, nil
+}
+
+func parseSDKManager(value string) (domain.SDKManager, error) {
+	switch m := domain.SDKManager(strings.ToLower(strings.TrimSpace(value))); m {
+	case domain.SDKManagerAuto, domain.SDKManagerFVM, domain.SDKManagerPuro, domain.SDKManagerNone:
+		return m, nil
+	default:
+		return "", domain.NewError(domain.CategoryInput, 2, "Invalid value for sdk.manager.", "Use auto, fvm, puro or none.", nil)
 	}
 }
 
