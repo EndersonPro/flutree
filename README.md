@@ -198,18 +198,18 @@ flutree create <name> [flags]
 | `--branch` | string | `feature/<name>` | Target branch name |
 | `--base-branch` | string | `main` | Base branch for worktree creation |
 | `--scope` | string | `.` | Directory scope used to discover Flutter repositories |
-| `--root-repo` | string |  | Root repository selector (required in non-interactive mode) |
+| `--root-repo` | string |  | Root repository selector: name, package name or path to a Flutter repo, may be outside `--scope` (required in non-interactive mode) |
 | `--workspace` | boolean | `true` | Generate VSCode workspace file |
 | `--no-workspace` | boolean | `false` | Disable VSCode workspace generation |
 | `--yes` | boolean | `false` | Acknowledge dry plan automatically in non-interactive mode |
 | `--non-interactive` | boolean | `false` | Disable prompts |
 | `--reuse-existing-branch` | boolean | `false` | Reuse existing local branch in non-interactive mode |
 | `--no-package` | boolean | `false` | Root-only mode (skip package selection and package metadata) |
-| `--package` | string |  | Package repository selector (repeatable) |
-| `--package-base` | string |  | Override package base branch as `<selector>=<branch>` (repeatable) |
+| `--package` | string |  | Package repository selector: name, package name or path to a Flutter repo (repeatable) |
+| `--package-base` | string |  | Override package base branch as `<selector>=<branch>` (repeatable). Default `develop` must exist locally or on origin, otherwise create fails with exit 2 before changing anything |
 | `--copy-root-file` | string |  | Extra root-level file/pattern to copy into each worktree (repeatable). By default `.env` and `.env.*` are copied when present |
 
-Interactive mode can be run from any directory. When the scope has no Flutter repositories, a folder navigator opens (`Up`/`Down` move, `Enter` opens a folder, `Tab` selects the current folder as scope, `Esc` goes back); press `ctrl+o` on the root step to change folder at any time. The root and package lists filter as you type. If the scope you picked differs from `scope.root`, the review step offers to save it as the default scope (`s` toggles, on by default). Non-interactive mode is unchanged.
+Interactive mode can be run from any directory. When the scope has no Flutter repositories, a folder navigator opens (`Up`/`Down` move, `Enter` opens a folder, `Tab` selects the current folder as scope, `Esc` goes up one folder, then back); folders that are Flutter repositories are marked `[flutter]` and `Tab` on one selects it directly as the root. On the packages step press `ctrl+o` to add packages from any folder (`Tab` on a Flutter repo adds it selected, `Tab` on another folder adds the repos found under it), so root and packages can live in unrelated folders. Press `ctrl+o` on the root step to change folder at any time. A failed create deletes the branches it created. The root and package lists filter as you type. If the scope you picked differs from `scope.root`, the review step offers to save it as the default scope (`s` toggles, on by default). Non-interactive mode is unchanged.
 
 ### add-repo
 
@@ -224,7 +224,7 @@ flutree add-repo <workspace> [flags]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--scope` | string | `.` | Directory scope used to discover Flutter repositories |
-| `--repo` | string |  | Repository selector to attach (repeatable). Required in non-interactive mode; bypasses interactive wizard when provided |
+| `--repo` | string |  | Repository selector to attach: name, package name or path to a Flutter repo, may be outside `--scope` (repeatable). Required in non-interactive mode; bypasses interactive wizard when provided |
 | `--package-base` | string |  | Override package base branch as `<selector>=<branch>` (repeatable) |
 | `--copy-root-file` | string |  | Extra root-level file/pattern to copy into attached worktrees (repeatable). Default includes `.env` and `.env.*` |
 | `--non-interactive` | boolean | `false` | Disable interactive wizard/prompts and enforce deterministic execution |

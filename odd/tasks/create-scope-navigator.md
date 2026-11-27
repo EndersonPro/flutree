@@ -20,7 +20,7 @@ Branch: `feat/create-scope-navigator` (stacked on `feat/e2e-suite`) · Delivery:
 | ID | Specs | Route | Status | Commit |
 | --- | --- | --- | --- | --- |
 | T1 | S1–S6 | delegated writer (context backstop: long parent session) | done | 62434ec |
-| T2 | S7–S10 | delegated writer (context backstop) | in progress | — |
+| T2 | S7–S10 | delegated writer (context backstop) | done, verifying | (T2 commit) |
 
 ## Log
 
@@ -29,3 +29,4 @@ Branch: `feat/create-scope-navigator` (stacked on `feat/e2e-suite`) · Delivery:
 - L3 T1 (delegated writer, sonnet): navigator `internal/ui/dir_navigator.go`; keys: `ctrl+o` opens it from the root step, Up/Down (j/k in navigator), Enter opens, `Tab` selects current folder, Esc back/cancel; root/package steps filter by typing (Backspace edits, Esc clears); review `s` toggles saving scope.root. RED: 6 PTY navigator tests failed (CLI printed "No Flutter repositories were discovered…") → GREEN. Differential check vs base for non-interactive create (with/without repos, with/without bad --scope): identical. Parent: writer stayed in surfaces; moved the scope.root save before the JSON/human branches (it was skipped with --json) and made a save failure a stderr warning instead of failing a finished create. Full suite and e2e gate green. Known: on root/package steps j/k became filter text (arrows still move); the PTY harness leaks a terminal colour reply into the name field (pre-existing, tests match by prefix).
 - L4 Real-terminal QA (tmux, sonnet) in /tmp/tmp.JSCOjhRBF3: all S1–S6 scenarios pass; found failed-create branch leak, Esc-cancels-in-subfolder (parent confirmed in create_wizard.go), no scanning feedback, unchecked `develop` default, 80×24 truncation. No terminal-reply garbage in a real terminal.
 - L5 (2026-11-26, user): S7 question "es posible que estén en directorios diferente, podemos escoger el proyecto root o main principal donde se crea el override ?"; answer to the proposed design: "Si, hazlo así".
+- L6 T2 (delegated writer, sonnet): RED 10 new tests → GREEN 17 Navigator/RepoPath tests; `go test ./...` 11 ok; e2e gate ok. `[flutter]` marker, Tab on a repo = direct root, ctrl+o "Add packages" on the packages step, `CreateInput.Repos`, path selectors (contain `/` or start with `~`/`.`), `BaseBranchExists` (local, origin ref, ls-remote), branch rollback via `DeleteBranch`, async "Scanning", Esc goes up, hint wrapping and left-shortened paths. Differential vs base: identical except a missing package base now fails up front (exit 2). Writer changed one existing unit test for the async scan. Risk: item 1 (rollback runs `git branch -D` on branches created in the run) and item 3 (GitPort + selectors) → independent verifier.

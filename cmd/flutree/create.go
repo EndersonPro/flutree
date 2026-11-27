@@ -43,10 +43,20 @@ repositories are discovered. In the interactive wizard, if the scope has no
 Flutter repositories a folder navigator opens so you can pick the scope folder;
 press ctrl+o on the root step to change folder at any time. Navigator keys:
 Up/Down (or j/k) move, Enter opens a folder (.. goes up), Tab selects the
-current folder as scope, Esc goes back or cancels. Root and package lists
-filter as you type. When the scope was chosen in the navigator and differs from
+current folder as scope, Esc goes up one folder (back or cancel at the folder
+it opened at). Folders that are Flutter repos are marked [flutter]; Tab on one
+selects it directly as the root repository. On the packages step press ctrl+o
+to add packages from any folder: Tab on a Flutter repo adds it selected, Tab on
+any other folder adds the repos found under it. Root and package lists filter
+as you type. When the scope was chosen in the navigator and differs from
 scope.root, the review step offers to save it as the default scope (press s to
-toggle, on by default).`,
+toggle, on by default).
+
+--root-repo and --package accept a name, a package name or a path (absolute,
+~ or relative to the current directory) to a Flutter repository, even outside
+--scope. Every package base branch must exist locally or on origin (default
+develop); otherwise create fails before changing anything. If create fails, the
+branches it created are deleted again; pre-existing branches are never touched.`,
 		Example: `  flutree create feature-login
   flutree create feature-login --scope ~/code --root-repo app --package core --non-interactive --yes`,
 		Args: requireName("Missing worktree name.", "Usage: flutree create <name> [flags]"),
@@ -58,7 +68,7 @@ toggle, on by default).`,
 	f.StringVar(&opts.branch, "branch", "", "Target branch name (default: feature/<name>)")
 	f.StringVar(&opts.baseBranch, "base-branch", "main", "Base branch for worktree creation")
 	f.StringVar(&opts.scope, "scope", ".", "Directory scope for Flutter repo discovery")
-	f.StringVar(&opts.rootRepo, "root-repo", "", "Root repository selector")
+	f.StringVar(&opts.rootRepo, "root-repo", "", "Root repository selector: name, package name or path to a Flutter repo (may be outside --scope)")
 	f.BoolVar(&opts.workspace, "workspace", true, "Generate VSCode workspace file (default from config workspace.generate)")
 	f.BoolVar(&opts.noWorkspace, "no-workspace", false, "Disable VSCode workspace generation")
 	f.BoolVar(&opts.yes, "yes", false, "Auto-acknowledge dry plan in non-interactive mode")
@@ -66,7 +76,7 @@ toggle, on by default).`,
 	f.BoolVar(&opts.reuseExistingBranch, "reuse-existing-branch", false, "Allow non-interactive reuse of existing branch")
 	f.BoolVar(&opts.noPackage, "no-package", false, "Create root-only worktree without package selection")
 	f.StringArrayVar(&opts.copyRootFiles, "copy-root-file", nil, "Extra root file/pattern to copy (repeatable)")
-	f.StringArrayVar(&opts.packages, "package", nil, "Package repository selector (repeatable)")
+	f.StringArrayVar(&opts.packages, "package", nil, "Package repository selector: name, package name or path to a Flutter repo (repeatable)")
 	f.StringArrayVar(&opts.packageBase, "package-base", nil, "Override package base branch as <selector>=<branch> (repeatable)")
 	return cmd
 }
@@ -134,10 +144,9 @@ func runCreate(cmd *cobra.Command, name string, opts *createOptions) error {
 	saveScope := false
 	scopeToSave := ""
 	if !opts.nonInteractive && ui.SupportsInteractiveWizard() {
-		// An empty scope is not an error here: the wizard opens its folder
-		// navigator so the user can pick another scope. The scope itself was
+		// The wizard scans the scope itself (showing "Scanning ...") and opens
+		// its folder navigator when nothing is found. The scope itself was
 		// already validated by the resolver.
-		repos, _ := gitGateway.DiscoverFlutterRepos(resolvedScope)
 		persistedScope, err := app.NewConfigService(configRepo).Get("scope.root")
 		if err != nil {
 			return err
@@ -155,7 +164,16 @@ func runCreate(cmd *cobra.Command, name string, opts *createOptions) error {
 			Scope:             resolvedScope,
 			Discover:          gitGateway.DiscoverFlutterRepos,
 			PersistedScope:    persistedScope,
-		}, repos)
+			ScanInitial:       true,
+			Inspect: func(path string) (domain.DiscoveredFlutterRepo, bool) {
+				repo, ok, _ := gitGateway.InspectFlutterRepo(path)
+				return repo, ok
+			},
+			BaseBranchExists: func(repoRoot, branch string) bool {
+				ok, _ := gitGateway.BaseBranchExists(repoRoot, branch)
+				return ok
+			},
+		}, nil)
 		if err != nil {
 			return err
 		}
@@ -171,6 +189,7 @@ func runCreate(cmd *cobra.Command, name string, opts *createOptions) error {
 		createInput.PackageSelectors = wizardResult.PackageSelectors
 		createInput.PackageBaseBranch = wizardResult.PackageBaseBranch
 		createInput.GenerateWorkspace = wizardResult.GenerateWorkspace
+		createInput.Repos = wizardResult.Repos
 		if strings.TrimSpace(wizardResult.Scope) != "" {
 			createInput.ExecutionScope = wizardResult.Scope
 		}

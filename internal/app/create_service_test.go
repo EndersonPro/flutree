@@ -25,6 +25,12 @@ type fakeCreateGit struct {
 	syncCalls          []string
 	syncErr            error
 	remoteBranchErr    error
+	// missingBases lists "<repoRoot>::<branch>" base branches that do not exist.
+	missingBases  map[string]bool
+	deleted       []string
+	inspectable   map[string]domain.DiscoveredFlutterRepo
+	failCreateAt  string
+	discoverCalls int
 }
 
 func (f *fakeCreateGit) EnsureRepo() (string, error) { return "", nil }
@@ -37,6 +43,9 @@ func (f *fakeCreateGit) CreateWorktree(repoRoot, path, branch, baseBranch string
 	return nil
 }
 func (f *fakeCreateGit) CreateWorktreeNew(repoRoot, path, branch, startPoint string) error {
+	if f.failCreateAt != "" && strings.HasSuffix(path, f.failCreateAt) {
+		return errors.New("boom")
+	}
 	_ = os.MkdirAll(path, 0o755)
 	f.created = append(f.created, strings.Join([]string{"new", repoRoot, path, branch, startPoint}, "::"))
 	return nil
@@ -83,7 +92,19 @@ func (f *fakeCreateGit) RemoveWorktree(repoRoot, path string, force bool) error 
 func (f *fakeCreateGit) IsDirty(path string) (bool, error)       { return f.dirty, nil }
 func (f *fakeCreateGit) EnsureLocalExclude(string, string) error { return nil }
 func (f *fakeCreateGit) DiscoverFlutterRepos(scope string) ([]domain.DiscoveredFlutterRepo, error) {
+	f.discoverCalls++
 	return f.repos, nil
+}
+func (f *fakeCreateGit) InspectFlutterRepo(path string) (domain.DiscoveredFlutterRepo, bool, error) {
+	repo, ok := f.inspectable[path]
+	return repo, ok, nil
+}
+func (f *fakeCreateGit) BaseBranchExists(repoRoot, branch string) (bool, error) {
+	return !f.missingBases[repoRoot+"::"+branch], nil
+}
+func (f *fakeCreateGit) DeleteBranch(repoRoot, branch string) error {
+	f.deleted = append(f.deleted, repoRoot+"::"+branch)
+	return nil
 }
 
 type fakeCreatePrompt struct {
@@ -944,5 +965,102 @@ func TestBuildDryPlanPackageBranchUsesExactExplicitOrDefaultRootBranch(t *testin
 				t.Fatalf("package branch mismatch. got=%+v want=%s", plan.Packages, tc.wantBranch)
 			}
 		})
+	}
+}
+
+func TestBuildDryPlanUsesExplicitReposInsteadOfDiscovery(t *testing.T) {
+	root := t.TempDir()
+	repos := []domain.DiscoveredFlutterRepo{
+		{Name: "root-app", RepoRoot: filepath.Join(root, "a", "root-app"), PackageName: "root_app"},
+		{Name: "pkg-x", RepoRoot: filepath.Join(root, "b", "pkg-x"), PackageName: "pkg_x"},
+	}
+	g := &fakeCreateGit{}
+	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
+
+	plan, err := svc.BuildDryPlan(domain.CreateInput{
+		Name: "explicit", BaseBranch: "main", ExecutionScope: root, Repos: repos,
+		RootSelector: "root-app", PackageSelectors: []string{"pkg-x"},
+		PackageBaseBranch: map[string]string{"pkg-x": "main"}, NonInteractive: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if g.discoverCalls != 0 {
+		t.Fatalf("explicit repos must replace discovery, got %d discover calls", g.discoverCalls)
+	}
+	if len(plan.Packages) != 1 || plan.Packages[0].Repo.Name != "pkg-x" {
+		t.Fatalf("unexpected packages: %+v", plan.Packages)
+	}
+}
+
+func TestBuildDryPlanAddsPathSelectorOutsideScope(t *testing.T) {
+	scopeRepo := domain.DiscoveredFlutterRepo{Name: "root-app", RepoRoot: "/scope/root-app", PackageName: "root_app"}
+	outside := domain.DiscoveredFlutterRepo{Name: "pkg-x", RepoRoot: "/elsewhere/pkg-x", PackageName: "pkg_x"}
+	g := &fakeCreateGit{repos: []domain.DiscoveredFlutterRepo{scopeRepo}, inspectable: map[string]domain.DiscoveredFlutterRepo{"/elsewhere/pkg-x": outside}}
+	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
+
+	plan, err := svc.BuildDryPlan(domain.CreateInput{
+		Name: "outside", BaseBranch: "main", ExecutionScope: "/scope", RootSelector: "root-app",
+		PackageSelectors: []string{"/elsewhere/pkg-x"}, PackageBaseBranch: map[string]string{"pkg-x": "main"}, NonInteractive: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(plan.Packages) != 1 || plan.Packages[0].Repo.RepoRoot != "/elsewhere/pkg-x" {
+		t.Fatalf("expected the outside repo as package, got %+v", plan.Packages)
+	}
+}
+
+func TestBuildDryPlanFailsWhenPackageBaseBranchIsMissing(t *testing.T) {
+	root := t.TempDir()
+	repos := []domain.DiscoveredFlutterRepo{
+		{Name: "root-app", RepoRoot: filepath.Join(root, "root-app"), PackageName: "root_app"},
+		{Name: "core", RepoRoot: filepath.Join(root, "core"), PackageName: "core"},
+	}
+	g := &fakeCreateGit{repos: repos, missingBases: map[string]bool{filepath.Join(root, "core") + "::develop": true}}
+	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
+
+	_, err := svc.BuildDryPlan(domain.CreateInput{
+		Name: "nobase", BaseBranch: "main", ExecutionScope: root, RootSelector: "root-app",
+		PackageSelectors: []string{"core"}, NonInteractive: true,
+	})
+	var flutreeErr *domain.AppError
+	if !errors.As(err, &flutreeErr) || flutreeErr.Code != 2 {
+		t.Fatalf("expected an input error with code 2, got %v", err)
+	}
+	if flutreeErr.Message != "Base branch 'develop' does not exist in core." || flutreeErr.Hint != "Pass --package-base core=<branch>." {
+		t.Fatalf("unexpected message/hint: %q / %q", flutreeErr.Message, flutreeErr.Hint)
+	}
+}
+
+func TestApplyFailureDeletesOnlyBranchesCreatedInThisRun(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	rootRepo := filepath.Join(root, "root-app")
+	pkgA := filepath.Join(root, "pkg-a")
+	pkgB := filepath.Join(root, "pkg-b")
+	g := &fakeCreateGit{
+		repos: []domain.DiscoveredFlutterRepo{
+			{Name: "root-app", RepoRoot: rootRepo, PackageName: "root_app"},
+			{Name: "pkg-a", RepoRoot: pkgA, PackageName: "pkg_a"},
+			{Name: "pkg-b", RepoRoot: pkgB, PackageName: "pkg_b"},
+		},
+		branchExistsByID: map[string]bool{pkgA + "::feature/x": true}, // pre-existing: reused
+		failCreateAt:     filepath.Join("packages", "pkg-b"),
+	}
+	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
+	plan, err := svc.BuildDryPlan(domain.CreateInput{
+		Name: "rollback-" + strings.ReplaceAll(filepath.Base(root), "_", "-"), Branch: "feature/x", BaseBranch: "main", ExecutionScope: root,
+		RootSelector: "root-app", PackageSelectors: []string{"pkg-a", "pkg-b"},
+		PackageBaseBranch: map[string]string{"pkg-a": "main", "pkg-b": "main"}, NonInteractive: true,
+	})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+	if _, err := svc.Apply(plan, domain.CreateApplyOptions{NonInteractive: true, ReuseExistingBranch: true}); err == nil {
+		t.Fatalf("expected the apply to fail")
+	}
+	if len(g.deleted) != 1 || g.deleted[0] != rootRepo+"::feature/x" {
+		t.Fatalf("only the branch created in this run may be deleted, got %v", g.deleted)
 	}
 }

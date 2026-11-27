@@ -20,6 +20,13 @@ type GitPort interface {
 	// committed ignore file (.git/info/exclude) when it is not there yet.
 	EnsureLocalExclude(worktreePath, pattern string) error
 	DiscoverFlutterRepos(scope string) ([]domain.DiscoveredFlutterRepo, error)
+	// InspectFlutterRepo reports whether path itself is a Flutter repository,
+	// using the same rules and fields as DiscoverFlutterRepos.
+	InspectFlutterRepo(path string) (domain.DiscoveredFlutterRepo, bool, error)
+	// BaseBranchExists reports whether branch exists locally or on origin.
+	BaseBranchExists(repoRoot, branch string) (bool, error)
+	// DeleteBranch force-deletes a local branch (never a checked-out one).
+	DeleteBranch(repoRoot, branch string) error
 }
 
 // SDKPort reads Flutter SDK pins and runs the SDK manager in a worktree.

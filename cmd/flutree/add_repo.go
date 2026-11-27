@@ -40,7 +40,7 @@ func newAddRepoCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringVar(&opts.scope, "scope", ".", "Directory scope for Flutter repo discovery")
-	f.StringArrayVar(&opts.repos, "repo", nil, "Repository selector to attach (repeatable). Skips interactive wizard when provided")
+	f.StringArrayVar(&opts.repos, "repo", nil, "Repository selector to attach: name, package name or path to a Flutter repo, may be outside --scope (repeatable). Skips interactive wizard when provided")
 	f.StringArrayVar(&opts.packageBranchSource, "package-branch-source", nil, "Override package target branch as <selector>=<branch> (repeatable)")
 	f.StringArrayVar(&opts.packageBase, "package-base", nil, "Override package base branch as <selector>=<branch> (repeatable)")
 	f.StringVar(&opts.syncPolicy, "sync-policy", string(domain.AddRepoSyncAuto), "Sync behavior before create: auto|always|never")

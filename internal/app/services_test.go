@@ -45,6 +45,11 @@ func (f *fakeGit) IsDirty(path string) (bool, error) {
 func (f *fakeGit) DiscoverFlutterRepos(scope string) ([]domain.DiscoveredFlutterRepo, error) {
 	return nil, nil
 }
+func (f *fakeGit) InspectFlutterRepo(string) (domain.DiscoveredFlutterRepo, bool, error) {
+	return domain.DiscoveredFlutterRepo{}, false, nil
+}
+func (f *fakeGit) BaseBranchExists(string, string) (bool, error) { return true, nil }
+func (f *fakeGit) DeleteBranch(string, string) error             { return nil }
 
 type fakeRegistry struct {
 	records   []domain.RegistryRecord

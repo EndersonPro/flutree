@@ -246,15 +246,9 @@ func (g *Gateway) DiscoverFlutterRepos(scope string) ([]domain.DiscoveredFlutter
 	sort.Strings(keys)
 
 	for _, root := range keys {
-		pkgName, ok := readPubspecName(filepath.Join(root, "pubspec.yaml"))
-		if !ok {
-			continue
+		if repo, ok := flutterRepoAt(root); ok {
+			repos = append(repos, repo)
 		}
-		repos = append(repos, domain.DiscoveredFlutterRepo{
-			Name:        filepath.Base(root),
-			RepoRoot:    root,
-			PackageName: pkgName,
-		})
 	}
 
 	if len(repos) == 0 {
@@ -262,6 +256,56 @@ func (g *Gateway) DiscoverFlutterRepos(scope string) ([]domain.DiscoveredFlutter
 	}
 
 	return repos, nil
+}
+
+// flutterRepoAt applies the single rule for "is a Flutter repository": the
+// folder has a pubspec.yaml with a package name (the .git check is the caller's).
+func flutterRepoAt(root string) (domain.DiscoveredFlutterRepo, bool) {
+	pkgName, ok := readPubspecName(filepath.Join(root, "pubspec.yaml"))
+	if !ok {
+		return domain.DiscoveredFlutterRepo{}, false
+	}
+	return domain.DiscoveredFlutterRepo{Name: filepath.Base(root), RepoRoot: root, PackageName: pkgName}, true
+}
+
+// InspectFlutterRepo reports whether path itself is a Flutter repository: a
+// directory with .git and a pubspec.yaml, as DiscoverFlutterRepos requires.
+func (g *Gateway) InspectFlutterRepo(path string) (domain.DiscoveredFlutterRepo, bool, error) {
+	root := domain.NormalizePath(path)
+	if root == "" {
+		return domain.DiscoveredFlutterRepo{}, false, nil
+	}
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		return domain.DiscoveredFlutterRepo{}, false, nil
+	}
+	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
+		return domain.DiscoveredFlutterRepo{}, false, nil
+	}
+	repo, ok := flutterRepoAt(root)
+	return repo, ok, nil
+}
+
+// BaseBranchExists checks the local branch, the remote-tracking ref and, as a
+// last resort, origin itself.
+func (g *Gateway) BaseBranchExists(repoRoot, branch string) (bool, error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return false, nil
+	}
+	if ok, err := g.BranchExists(repoRoot, branch); err != nil || ok {
+		return ok, err
+	}
+	if _, err := g.run(repoRoot, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+branch); err == nil {
+		return true, nil
+	}
+	out, err := g.run(repoRoot, "ls-remote", "--heads", "origin", branch)
+	return err == nil && strings.TrimSpace(out) != "", nil
+}
+
+// DeleteBranch force-deletes a local branch. Git refuses a checked-out branch.
+func (g *Gateway) DeleteBranch(repoRoot, branch string) error {
+	_, err := g.run(repoRoot, "branch", "-D", strings.TrimSpace(branch))
+	return err
 }
 
 func (g *Gateway) run(cwd string, args ...string) (string, error) {

@@ -20,6 +20,7 @@ type fakeAddRepoGit struct {
 	createNewCalls   []string
 	createExistCalls []string
 	removed          []string
+	inspectable      map[string]domain.DiscoveredFlutterRepo
 }
 
 func (f *fakeAddRepoGit) EnsureRepo() (string, error) { return "", nil }
@@ -71,6 +72,12 @@ func (f *fakeAddRepoGit) EnsureLocalExclude(string, string) error { return nil }
 func (f *fakeAddRepoGit) DiscoverFlutterRepos(scope string) ([]domain.DiscoveredFlutterRepo, error) {
 	return append([]domain.DiscoveredFlutterRepo{}, f.discovered...), nil
 }
+func (f *fakeAddRepoGit) InspectFlutterRepo(path string) (domain.DiscoveredFlutterRepo, bool, error) {
+	repo, ok := f.inspectable[path]
+	return repo, ok, nil
+}
+func (f *fakeAddRepoGit) BaseBranchExists(string, string) (bool, error) { return true, nil }
+func (f *fakeAddRepoGit) DeleteBranch(string, string) error             { return nil }
 
 type fakeAddRepoRegistry struct {
 	records []domain.RegistryRecord

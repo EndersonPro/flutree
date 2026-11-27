@@ -28,6 +28,9 @@ func (s *AddRepoService) WithSDK(sdk SDKPort, preference func() (domain.SDKManag
 type AddRepoSelectionContextInput struct {
 	WorkspaceName  string
 	ExecutionScope string
+	// AllowNoCandidates keeps an empty in-scope candidate list from failing, for
+	// selectors that are paths to repositories outside the scope.
+	AllowNoCandidates bool
 }
 
 type AddRepoSelectionContext struct {
@@ -69,7 +72,13 @@ func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, e
 		return domain.AddRepoResult{}, domain.NewError(domain.CategoryInput, 2, "Add-repo requires root workspace name.", "Use root workspace name shown by `flutree list`.", nil)
 	}
 
-	ctx, err := s.buildRuntimeContext(AddRepoSelectionContextInput{WorkspaceName: workspaceName, ExecutionScope: input.ExecutionScope})
+	hasPathSelector := false
+	for _, selector := range input.RepoSelectors {
+		if looksLikePath(selector) {
+			hasPathSelector = true
+		}
+	}
+	ctx, err := s.buildRuntimeContext(AddRepoSelectionContextInput{WorkspaceName: workspaceName, ExecutionScope: input.ExecutionScope, AllowNoCandidates: hasPathSelector})
 	if err != nil {
 		return domain.AddRepoResult{}, err
 	}
@@ -80,6 +89,29 @@ func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, e
 	candidates := ctx.candidates
 
 	selectors := dedupStringsPreservingOrder(input.RepoSelectors)
+	if hasPathSelector {
+		// A path to a Flutter repo outside the scope joins the candidates, unless
+		// it is the root or already attached.
+		var added int
+		var known []domain.DiscoveredFlutterRepo
+		known = append(known, candidates...)
+		known, selectors, added = withPathRepos(s.git, known, selectors)
+		if added > 0 {
+			attached := map[string]struct{}{filepath.Clean(rootRecord.RepoRoot): {}}
+			for _, rec := range existingPackages {
+				attached[filepath.Clean(rec.RepoRoot)] = struct{}{}
+			}
+			candidates = candidates[:0:0]
+			for _, repo := range known {
+				if _, skip := attached[filepath.Clean(repo.RepoRoot)]; !skip {
+					candidates = append(candidates, repo)
+				}
+			}
+		}
+		if len(candidates) == 0 {
+			return domain.AddRepoResult{}, domain.NewError(domain.CategoryPrecondition, 3, "No additional repositories available to attach.", "All discoverable repositories are already attached.", nil)
+		}
+	}
 	if len(selectors) == 0 {
 		if input.NonInteractive {
 			return domain.AddRepoResult{}, domain.NewError(domain.CategoryInput, 2, "Repository selection is required in non-interactive mode.", "Pass one or more --repo selectors.", nil)
@@ -177,7 +209,7 @@ func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, e
 			rollback()
 			return domain.AddRepoResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to create package worktree directory.", plan.Path, err)
 		}
-		if err := createSvc.createPlannedWorktree(plan, domain.CreateApplyOptions{
+		if _, err := createSvc.createPlannedWorktree(plan, domain.CreateApplyOptions{
 			NonInteractive:      input.NonInteractive,
 			ReuseExistingBranch: input.ReuseExistingBranch,
 			SyncWithRemote:      syncWithRemote,
@@ -330,7 +362,7 @@ func (s *AddRepoService) buildRuntimeContext(input AddRepoSelectionContextInput)
 		}
 		candidates = append(candidates, repo)
 	}
-	if len(candidates) == 0 {
+	if len(candidates) == 0 && !input.AllowNoCandidates {
 		return addRepoRuntimeContext{}, domain.NewError(domain.CategoryPrecondition, 3, "No additional repositories available to attach.", "All discoverable repositories are already attached.", nil)
 	}
 	sort.Slice(candidates, func(i, j int) bool {

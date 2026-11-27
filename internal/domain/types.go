@@ -171,10 +171,13 @@ type CleanResult struct {
 }
 
 type CreateInput struct {
-	Name              string
-	Branch            string
-	BaseBranch        string
-	ExecutionScope    string
+	Name           string
+	Branch         string
+	BaseBranch     string
+	ExecutionScope string
+	// Repos is an optional explicit candidate set. When non-empty it replaces
+	// the discovery of ExecutionScope (repositories may live in unrelated folders).
+	Repos             []DiscoveredFlutterRepo
 	RootSelector      string
 	NoPackage         bool
 	PackageSelectors  []string

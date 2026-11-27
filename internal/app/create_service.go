@@ -40,19 +40,32 @@ func (s *CreateService) BuildDryPlan(input domain.CreateInput) (domain.CreateDry
 	rootBranch := normalizeBranchName(rootBranchInput)
 	baseBranch := normalizeBranchName(input.BaseBranch)
 
-	repos, err := s.git.DiscoverFlutterRepos(input.ExecutionScope)
-	if err != nil {
-		return domain.CreateDryPlan{}, err
+	// An explicit candidate set (chosen in the wizard) replaces discovery.
+	repos := dedupRepos(input.Repos)
+	var discoverErr error
+	if len(repos) == 0 {
+		repos, discoverErr = s.git.DiscoverFlutterRepos(input.ExecutionScope)
+		if discoverErr != nil {
+			repos = nil
+		}
 	}
+	// A selector that is a path to a Flutter repo outside the scope joins the
+	// candidates; selectors are rewritten to the repo's absolute path.
+	selectors := append([]string{input.RootSelector}, input.PackageSelectors...)
+	repos, selectors, extra := withPathRepos(s.git, repos, selectors)
+	if discoverErr != nil && extra == 0 {
+		return domain.CreateDryPlan{}, discoverErr
+	}
+	rootSelector, packageSelectors := selectors[0], selectors[1:]
 
-	rootRepo, err := s.resolveRootRepo(repos, input.RootSelector, input.NonInteractive)
+	rootRepo, err := s.resolveRootRepo(repos, rootSelector, input.NonInteractive)
 	if err != nil {
 		return domain.CreateDryPlan{}, err
 	}
 
 	packages := []domain.DiscoveredFlutterRepo{}
 	if !input.NoPackage {
-		packages, err = s.resolvePackageRepos(repos, rootRepo, input.PackageSelectors, input.NonInteractive)
+		packages, err = s.resolvePackageRepos(repos, rootRepo, packageSelectors, input.NonInteractive)
 		if err != nil {
 			return domain.CreateDryPlan{}, err
 		}
@@ -103,6 +116,22 @@ func (s *CreateService) BuildDryPlan(input domain.CreateInput) (domain.CreateDry
 	}
 	sort.Slice(packagePlans, func(i, j int) bool { return packagePlans[i].Repo.Name < packagePlans[j].Repo.Name })
 
+	// Fail before any side effect when a package base branch is missing.
+	for _, plan := range packagePlans {
+		ok, err := s.git.BaseBranchExists(plan.Repo.RepoRoot, plan.BaseBranch)
+		if err != nil {
+			return domain.CreateDryPlan{}, err
+		}
+		if !ok {
+			return domain.CreateDryPlan{}, domain.NewError(
+				domain.CategoryInput, 2,
+				"Base branch '"+plan.BaseBranch+"' does not exist in "+plan.Repo.Name+".",
+				"Pass --package-base "+plan.Repo.Name+"=<branch>.",
+				nil,
+			)
+		}
+	}
+
 	// Without packages there is nothing to override: the root pubspec's own
 	// dependency_overrides already apply, so no pubspec_overrides.yaml is written.
 	overridePath, overrideContent := "", ""
@@ -149,6 +178,9 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 
 	created := []domain.PlannedWorktree{}
 	persisted := []string{}
+	// Branches this run created; a branch that already existed is never listed.
+	type branchRef struct{ repoRoot, branch string }
+	createdBranches := []branchRef{}
 	// Only a container this run creates is removed on failure; one that
 	// already existed holds someone else's work.
 	_, statErr := os.Stat(plan.ContainerPath)
@@ -165,36 +197,48 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 		for i := len(created) - 1; i >= 0; i-- {
 			_ = s.git.RemoveWorktree(created[i].Repo.RepoRoot, created[i].Path, true)
 		}
+		// Branches go after their worktrees: git refuses a checked-out branch.
+		for i := len(createdBranches) - 1; i >= 0; i-- {
+			_ = s.git.DeleteBranch(createdBranches[i].repoRoot, createdBranches[i].branch)
+		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(plan.Root.Path), 0o755); err != nil {
 		rollback()
 		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to create root worktree directory.", plan.Root.Path, err)
 	}
-	if err := s.createPlannedWorktree(plan.Root, options); err != nil {
+	madeBranch, err := s.createPlannedWorktree(plan.Root, options)
+	if madeBranch {
+		createdBranches = append(createdBranches, branchRef{plan.Root.Repo.RepoRoot, plan.Root.Branch})
+	}
+	if err != nil {
 		rollback()
 		return domain.CreateResult{}, err
 	}
+	created = append(created, plan.Root)
 	if err := copyRootFiles(plan.Root.Repo.RepoRoot, plan.Root.Path, plan.RootFiles); err != nil {
 		rollback()
 		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to copy root files into root worktree.", plan.Root.Path, err)
 	}
-	created = append(created, plan.Root)
 
 	for _, pkg := range plan.Packages {
 		if err := os.MkdirAll(filepath.Dir(pkg.Path), 0o755); err != nil {
 			rollback()
 			return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to create package worktree directory.", pkg.Path, err)
 		}
-		if err := s.createPlannedWorktree(pkg, options); err != nil {
+		madeBranch, err := s.createPlannedWorktree(pkg, options)
+		if madeBranch {
+			createdBranches = append(createdBranches, branchRef{pkg.Repo.RepoRoot, pkg.Branch})
+		}
+		if err != nil {
 			rollback()
 			return domain.CreateResult{}, err
 		}
+		created = append(created, pkg)
 		if err := copyRootFiles(pkg.Repo.RepoRoot, pkg.Path, plan.RootFiles); err != nil {
 			rollback()
 			return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to copy root files into package worktree.", pkg.Path, err)
 		}
-		created = append(created, pkg)
 	}
 
 	if plan.OverridePath != "" {
@@ -258,16 +302,19 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 	}, nil
 }
 
-func (s *CreateService) createPlannedWorktree(target domain.PlannedWorktree, options domain.CreateApplyOptions) error {
+// createPlannedWorktree creates the worktree for target. The boolean reports
+// that this call created the local branch (so a rollback may delete it); it is
+// true even when a later step of the call failed.
+func (s *CreateService) createPlannedWorktree(target domain.PlannedWorktree, options domain.CreateApplyOptions) (bool, error) {
 	exists, err := s.git.BranchExists(target.Repo.RepoRoot, target.Branch)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if exists {
 		if options.NonInteractive {
 			if !options.ReuseExistingBranch {
-				return domain.NewError(
+				return false, domain.NewError(
 					domain.CategoryInput,
 					2,
 					"Existing branch reuse requires explicit --reuse-existing-branch in non-interactive mode.",
@@ -279,10 +326,10 @@ func (s *CreateService) createPlannedWorktree(target domain.PlannedWorktree, opt
 			confirmMessage := "Branch '" + target.Branch + "' already exists for repo '" + target.Repo.Name + "'. Reuse it for this worktree?"
 			confirmed, confirmErr := s.prompt.Confirm(confirmMessage, false, false)
 			if confirmErr != nil {
-				return confirmErr
+				return false, confirmErr
 			}
 			if !confirmed {
-				return domain.NewError(
+				return false, domain.NewError(
 					domain.CategoryInput,
 					2,
 					"Create cancelled by user while confirming branch reuse.",
@@ -294,32 +341,27 @@ func (s *CreateService) createPlannedWorktree(target domain.PlannedWorktree, opt
 
 		if options.SyncWithRemote {
 			if err := s.git.SyncBranchWithRemote(target.Repo.RepoRoot, target.Branch); err != nil {
-				return err
+				return false, err
 			}
 		}
 
-		if err := s.git.CreateWorktreeExisting(target.Repo.RepoRoot, target.Path, target.Branch); err != nil {
-			return err
-		}
-		return nil
+		return false, s.git.CreateWorktreeExisting(target.Repo.RepoRoot, target.Path, target.Branch)
 	}
 
 	// Branch doesn't exist locally — check if it exists on origin
 	if options.SyncWithRemote {
 		remoteExists, err := s.git.RemoteBranchExists(target.Repo.RepoRoot, target.Branch)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if remoteExists {
 			// Fetch and set up local branch from remote
 			if err := s.git.SyncBranchWithRemote(target.Repo.RepoRoot, target.Branch); err != nil {
-				return err
+				return false, err
 			}
-			// Create worktree from the now-existing local branch
-			if err := s.git.CreateWorktreeExisting(target.Repo.RepoRoot, target.Path, target.Branch); err != nil {
-				return err
-			}
-			return nil
+			// Create worktree from the now-existing local branch; the local
+			// branch is ours from here on.
+			return true, s.git.CreateWorktreeExisting(target.Repo.RepoRoot, target.Path, target.Branch)
 		}
 	}
 
@@ -327,13 +369,13 @@ func (s *CreateService) createPlannedWorktree(target domain.PlannedWorktree, opt
 	if options.SyncWithRemote {
 		startPoint, err = s.git.SyncBaseBranch(target.Repo.RepoRoot, target.BaseBranch)
 		if err != nil {
-			return err
+			return false, err
 		}
 	}
 	if err := s.git.CreateWorktreeNew(target.Repo.RepoRoot, target.Path, target.Branch, startPoint); err != nil {
-		return err
+		return false, err
 	}
-	return nil
+	return true, nil
 }
 
 func (s *CreateService) resolveRootRepo(repos []domain.DiscoveredFlutterRepo, selector string, nonInteractive bool) (domain.DiscoveredFlutterRepo, error) {
@@ -489,4 +531,49 @@ func writeWorkspace(path string, folders []string) error {
 		return domain.NewError(domain.CategoryPersistence, 5, "Failed to write VSCode workspace file.", path, err)
 	}
 	return nil
+}
+
+// looksLikePath tells a path selector (./x, ../x, /x, ~/x, a/b) from a repo name.
+func looksLikePath(selector string) bool {
+	sel := strings.TrimSpace(selector)
+	return strings.HasPrefix(sel, "~") || strings.HasPrefix(sel, ".") || strings.ContainsRune(sel, filepath.Separator)
+}
+
+// resolvePathSelector expands "~" and makes the path absolute (relative paths
+// resolve from the current directory).
+func resolvePathSelector(selector string) string {
+	sel := strings.TrimSpace(selector)
+	if sel == "~" || strings.HasPrefix(sel, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			sel = filepath.Join(home, strings.TrimPrefix(sel, "~"))
+		}
+	}
+	return domain.NormalizePath(sel)
+}
+
+// withPathRepos adds to repos every selector that is a path to a Flutter repo
+// not already known (for example one outside the discovery scope). Matching
+// selectors are rewritten to the repo's absolute path so the usual selector
+// matching applies; it returns how many repos were added.
+func withPathRepos(git GitPort, repos []domain.DiscoveredFlutterRepo, selectors []string) ([]domain.DiscoveredFlutterRepo, []string, int) {
+	out := append([]string(nil), selectors...)
+	added := 0
+	for i, selector := range out {
+		if strings.TrimSpace(selector) == "" || !looksLikePath(selector) {
+			continue
+		}
+		if _, ok := findRepoBySelector(repos, selector); ok {
+			continue
+		}
+		repo, ok, err := git.InspectFlutterRepo(resolvePathSelector(selector))
+		if err != nil || !ok {
+			continue
+		}
+		out[i] = repo.RepoRoot
+		if _, known := findRepoBySelector(repos, repo.RepoRoot); !known {
+			repos = append(repos, repo)
+			added++
+		}
+	}
+	return repos, out, added
 }

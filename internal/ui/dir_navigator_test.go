@@ -3,6 +3,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -70,5 +71,50 @@ func TestDirNavigatorUnreadableDirectoryShowsInlineError(t *testing.T) {
 	}
 	if n.path != root {
 		t.Fatalf("navigator must stay in %q, got %q", root, n.path)
+	}
+}
+
+func TestDirNavigatorMarksFlutterReposAndUpStopsAtStart(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "app")
+	sub := filepath.Join(root, "plain", "inner")
+	for _, d := range []string{repo, sub} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n := newDirNavigatorWith(root, func(p string) bool { return p == repo })
+	if !strings.Contains(n.view(), "app/ [flutter]") || strings.Contains(n.view(), "plain/ [flutter]") {
+		t.Fatalf("only the repo row must be marked:\n%s", n.view())
+	}
+	if n.up() {
+		t.Fatalf("up must not leave the starting folder")
+	}
+	n.cursor = 2 // plain/
+	n.enter()
+	n.cursor = 1 // inner/
+	n.enter()
+	if !n.up() || n.path != filepath.Join(root, "plain") {
+		t.Fatalf("up must go one folder up, at %s", n.path)
+	}
+	if !n.up() || n.path != root {
+		t.Fatalf("up must reach the starting folder, at %s", n.path)
+	}
+	if n.up() {
+		t.Fatalf("up must stop at the starting folder")
+	}
+}
+
+func TestShortenLeftAndWrapText(t *testing.T) {
+	if got := shortenLeft("/very/long/path/to/folder", 12); got != "…h/to/folder" || len([]rune(got)) != 12 {
+		t.Fatalf("shortenLeft = %q", got)
+	}
+	if got := shortenLeft("/short", 20); got != "/short" {
+		t.Fatalf("shortenLeft must keep short paths, got %q", got)
+	}
+	for _, line := range strings.Split(wrapText("one two three four five six seven", 10), "\n") {
+		if len(line) > 10 {
+			t.Fatalf("line %q exceeds the width", line)
+		}
 	}
 }

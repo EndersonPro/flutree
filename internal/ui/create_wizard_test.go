@@ -286,7 +286,12 @@ func TestCreateWizardStartsInNavigatorWhenNoRepos(t *testing.T) {
 	if m.step != stepScope {
 		t.Fatalf("expected the navigator step, got %v", m.step)
 	}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(createWizardModel)
+	if !m.scanning || cmd == nil {
+		t.Fatalf("expected an asynchronous scan to start")
+	}
+	updated, _ = m.Update(cmd())
 	m = updated.(createWizardModel)
 	if m.step != stepScope || m.nav.errMsg == "" {
 		t.Fatalf("expected to stay in the navigator with a message, got step=%v err=%q", m.step, m.nav.errMsg)
