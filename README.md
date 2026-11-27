@@ -450,6 +450,8 @@ Replace `/path/to/flutree` with the output of `which flutree`. The server reads 
 - `1`: operational/precondition/process/git/update failure
 - `2`: input or user-cancelled flow
 
+With `--json`, the error envelope on stderr carries a `code` equal to the process exit code.
+
 ## 🗂️ Registry
 
 Global registry file:

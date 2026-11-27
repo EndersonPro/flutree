@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -114,20 +115,20 @@ func (s *PubGetService) runPackages(records []domain.RegistryRecord, force bool)
 func (s *PubGetService) runRepo(record domain.RegistryRecord, role string, force bool) (domain.PubGetRepoResult, error) {
 	tool, err := s.pub.DetectTool(record.Path)
 	if err != nil {
-		return domain.PubGetRepoResult{}, fmt.Errorf("[%s] %s", repoLabelForError(role, record), err.Error())
+		return domain.PubGetRepoResult{}, fmt.Errorf("[%s] %s", repoLabelForError(role, record), errorText(err))
 	}
 
 	if force {
 		if err := s.pub.Clean(record.Path, tool); err != nil {
-			return domain.PubGetRepoResult{}, fmt.Errorf("[%s] clean failed: %s", repoLabelForError(role, record), err.Error())
+			return domain.PubGetRepoResult{}, fmt.Errorf("[%s] clean failed: %s", repoLabelForError(role, record), errorText(err))
 		}
 		if err := s.pub.RemoveLock(record.Path); err != nil {
-			return domain.PubGetRepoResult{}, fmt.Errorf("[%s] lock removal failed: %s", repoLabelForError(role, record), err.Error())
+			return domain.PubGetRepoResult{}, fmt.Errorf("[%s] lock removal failed: %s", repoLabelForError(role, record), errorText(err))
 		}
 	}
 
 	if err := s.pub.Get(record.Path, tool); err != nil {
-		return domain.PubGetRepoResult{}, fmt.Errorf("[%s] pub get failed: %s", repoLabelForError(role, record), err.Error())
+		return domain.PubGetRepoResult{}, fmt.Errorf("[%s] pub get failed: %s", repoLabelForError(role, record), errorText(err))
 	}
 
 	return domain.PubGetRepoResult{
@@ -184,6 +185,15 @@ func findRecordByName(records []domain.RegistryRecord, name string) (domain.Regi
 		}
 	}
 	return domain.RegistryRecord{}, false
+}
+
+// errorText renders err with its hint, which carries the tool output.
+func errorText(err error) string {
+	var appErr *domain.AppError
+	if errors.As(err, &appErr) && appErr.Hint != "" {
+		return appErr.Message + "\n" + appErr.Hint
+	}
+	return err.Error()
 }
 
 func repoLabelForError(role string, record domain.RegistryRecord) string {

@@ -45,11 +45,15 @@ func ExitOnErrorJSON(err error, jsonFlag bool) {
 	}
 	var appErr *domain.AppError
 	if errors.As(err, &appErr) {
+		exitCode := 1
+		if appErr.Category == domain.CategoryInput {
+			exitCode = 2
+		}
 		if jsonFlag {
 			jsonErr := ErrorJSONOutput{
 				Error: ErrorInfo{
 					Category: string(appErr.Category),
-					Code:     appErr.Code,
+					Code:     exitCode,
 					Message:  appErr.Message,
 					Hint:     appErr.Hint,
 				},
@@ -62,10 +66,7 @@ func ExitOnErrorJSON(err error, jsonFlag bool) {
 				fmt.Fprintf(os.Stderr, "Hint: %s\n", appErr.Hint)
 			}
 		}
-		if appErr.Category == domain.CategoryInput {
-			os.Exit(2)
-		}
-		os.Exit(1)
+		os.Exit(exitCode)
 	}
 	if jsonFlag {
 		jsonErr := ErrorJSONOutput{

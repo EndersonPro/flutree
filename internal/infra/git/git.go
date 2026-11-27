@@ -169,6 +169,12 @@ func (g *Gateway) RemoveWorktree(repoRoot, path string, force bool) error {
 	return err
 }
 
+// PruneWorktrees removes git's metadata for worktrees whose directory no longer exists.
+func (g *Gateway) PruneWorktrees(repoRoot string) error {
+	_, err := g.run(repoRoot, "worktree", "prune")
+	return err
+}
+
 // EnsureLocalExclude appends pattern to the repository's info/exclude. Linked
 // worktrees resolve it to the shared exclude of the main repository, which Git
 // applies to untracked files only and never commits.

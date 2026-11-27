@@ -75,6 +75,7 @@ func (f *fakeCreateGit) SyncBaseBranch(repoRoot, baseBranch string) (string, err
 	}
 	return "origin/" + baseBranch, nil
 }
+func (f *fakeCreateGit) PruneWorktrees(string) error { return nil }
 func (f *fakeCreateGit) RemoveWorktree(repoRoot, path string, force bool) error {
 	f.removed = append(f.removed, repoRoot+"::"+path)
 	return nil

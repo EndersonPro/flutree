@@ -149,7 +149,16 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 
 	created := []domain.PlannedWorktree{}
 	persisted := []string{}
+	// Only a container this run creates is removed on failure; one that
+	// already existed holds someone else's work.
+	_, statErr := os.Stat(plan.ContainerPath)
+	containerPreExisted := statErr == nil
 	rollback := func() {
+		defer func() {
+			if !containerPreExisted && plan.ContainerPath != "" {
+				_ = os.RemoveAll(plan.ContainerPath)
+			}
+		}()
 		for i := len(persisted) - 1; i >= 0; i-- {
 			_, _ = s.registry.Remove(persisted[i])
 		}
@@ -159,9 +168,11 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 	}
 
 	if err := os.MkdirAll(filepath.Dir(plan.Root.Path), 0o755); err != nil {
+		rollback()
 		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to create root worktree directory.", plan.Root.Path, err)
 	}
 	if err := s.createPlannedWorktree(plan.Root, options); err != nil {
+		rollback()
 		return domain.CreateResult{}, err
 	}
 	if err := copyRootFiles(plan.Root.Repo.RepoRoot, plan.Root.Path, plan.RootFiles); err != nil {

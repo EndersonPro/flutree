@@ -13,6 +13,8 @@ type GitPort interface {
 	SyncBranchWithRemote(repoRoot, branch string) error
 	SyncBaseBranch(repoRoot, baseBranch string) (string, error)
 	RemoveWorktree(repoRoot, path string, force bool) error
+	// PruneWorktrees drops git metadata of worktrees whose directory is gone.
+	PruneWorktrees(repoRoot string) error
 	IsDirty(path string) (bool, error)
 	// EnsureLocalExclude adds pattern to the repository's local, never
 	// committed ignore file (.git/info/exclude) when it is not there yet.
