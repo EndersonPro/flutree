@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/tidwall/jsonc"
 )
 
 // loadJSONMap reads a file as map[string]json.RawMessage.
@@ -31,6 +33,28 @@ func loadJSONMap(path string) (map[string]json.RawMessage, error) {
 		return nil, fmt.Errorf("malformed JSON in %s: %w", filepath.Base(path), err)
 	}
 	return m, nil
+}
+
+// loadJSONCMap is loadJSONMap for configs that may carry JSONC comments and
+// trailing commas. lossy reports that rewriting the file would drop them (the
+// bytes change when normalised to plain JSON); callers may read such a file
+// but must not rewrite it without an explicit --force.
+func loadJSONCMap(path string) (root map[string]json.RawMessage, lossy bool, err error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return map[string]json.RawMessage{}, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if len(data) == 0 {
+		return map[string]json.RawMessage{}, false, nil
+	}
+	plain := jsonc.ToJSONInPlace(append([]byte(nil), data...))
+	if err := json.Unmarshal(plain, &root); err != nil {
+		return nil, false, fmt.Errorf("malformed JSON in %s: %w", filepath.Base(path), err)
+	}
+	return root, string(plain) != string(data), nil
 }
 
 // getOrCreateRawMap returns the sub-map stored under key in root, creating an
@@ -114,7 +138,23 @@ const entryName = "flutree"
 // preserving every other key and server. It returns OutcomeNotFound when the
 // file or entry does not exist, and never writes in that case.
 func jsonRemoveEntry(path, key string) (Outcome, error) {
-	root, err := loadJSONMap(path)
+	return jsonRemoveEntryOpt(path, key, false)
+}
+
+// jsonRemoveEntryOpt is jsonRemoveEntry for configs that may be JSONC. When
+// the entry exists in a file with comments or trailing commas it refuses to
+// rewrite (that would drop them) and asks for a manual removal.
+func jsonRemoveEntryOpt(path, key string, allowJSONC bool) (Outcome, error) {
+	var (
+		root  map[string]json.RawMessage
+		lossy bool
+		err   error
+	)
+	if allowJSONC {
+		root, lossy, err = loadJSONCMap(path)
+	} else {
+		root, err = loadJSONMap(path)
+	}
 	if err != nil {
 		return OutcomeError, err
 	}
@@ -124,6 +164,9 @@ func jsonRemoveEntry(path, key string) (Outcome, error) {
 	}
 	if _, ok := servers[entryName]; !ok {
 		return OutcomeNotFound, nil
+	}
+	if lossy {
+		return OutcomeError, fmt.Errorf("config contains JSONC comments or trailing commas; remove the %q entry from %s by hand", entryName, path)
 	}
 	delete(servers, entryName)
 	raw, err := json.Marshal(servers)
@@ -139,7 +182,19 @@ func jsonRemoveEntry(path, key string) (Outcome, error) {
 
 // jsonLookupCommand returns the command of root[key][flutree] in the JSON file.
 func jsonLookupCommand(path, key string) (string, bool, error) {
-	root, err := loadJSONMap(path)
+	return jsonLookupCommandOpt(path, key, false)
+}
+
+func jsonLookupCommandOpt(path, key string, allowJSONC bool) (string, bool, error) {
+	var (
+		root map[string]json.RawMessage
+		err  error
+	)
+	if allowJSONC {
+		root, _, err = loadJSONCMap(path)
+	} else {
+		root, err = loadJSONMap(path)
+	}
 	if err != nil {
 		return "", false, err
 	}

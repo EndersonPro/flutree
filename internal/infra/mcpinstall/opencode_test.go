@@ -164,9 +164,10 @@ func TestOpenCodeMerger_Merge_FileMissing_CreatesParentDirs(t *testing.T) {
 
 	configPath := filepath.Join(dir, ".config", "opencode", "opencode.json")
 	data := readJSON(t, configPath)
-	mcp := data["mcp"].(map[string]any)
-	if _, ok := mcp["flutree"]; !ok {
-		t.Error("flutree entry was not created")
+	// A new file follows the current docs: mcp.servers.<name> (V2).
+	servers := data["mcp"].(map[string]any)["servers"].(map[string]any)
+	if _, ok := servers["flutree"]; !ok {
+		t.Error("flutree entry was not created under mcp.servers")
 	}
 }
 
@@ -247,8 +248,8 @@ func TestOpenCodeMerger_Merge_JSONC_Force_StripsAndWrites(t *testing.T) {
 	if data["theme"] != "dark" {
 		t.Error("theme key was lost after JSONC strip")
 	}
-	mcp := data["mcp"].(map[string]any)
-	if _, ok := mcp["flutree"]; !ok {
+	servers := data["mcp"].(map[string]any)["servers"].(map[string]any)
+	if _, ok := servers["flutree"]; !ok {
 		t.Error("flutree entry was not created after JSONC strip")
 	}
 }

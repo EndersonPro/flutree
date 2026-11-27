@@ -14,6 +14,10 @@ type jsonSpec struct {
 	name   string
 	binary string // executable looked up on PATH for detection; "" disables
 	key    string // object holding the servers
+	// jsonc marks configs the client itself parses as JSONC (comments and
+	// trailing commas allowed). They are read tolerantly; rewriting one that
+	// has comments needs --force, exactly like OpenCode.
+	jsonc bool
 	// userPath and projectPath return the config file; projectPath is nil when
 	// the client has no project scope.
 	userPath    func(home string) string
@@ -80,13 +84,17 @@ func NewCursorMerger(baseDir string) Client {
 }
 
 // NewVSCodeMerger returns the VS Code (GitHub Copilot) client.
-// Source: https://code.visualstudio.com/docs/copilot/reference/mcp-configuration
-// (workspace .vscode/mcp.json and profile mcp.json, top-level "servers", stdio
-// entry with type/command/args). The per-OS profile directory (Code/User) is
-// not spelled out on that page; it is the standard VS Code user-data location.
+// Source: https://code.visualstudio.com/docs/agents/reference/mcp-configuration
+// (editor-managed workspace .vscode/mcp.json and user-profile mcp.json,
+// top-level "servers", stdio entry with type/command/args). Checked
+// 2026-11-27: neither that page nor
+// https://code.visualstudio.com/docs/copilot/customization/mcp-servers lists
+// the per-OS profile directory, so UNVERIFIED: Code/User/mcp.json is the
+// standard VS Code user-data location (APPDATA on Windows). mcp.json is
+// JSONC in VS Code, so it is read tolerantly (see jsonSpec.jsonc).
 func NewVSCodeMerger(baseDir string) Client {
 	return newJSONClient(jsonSpec{
-		name: "vscode", binary: "code", key: "servers",
+		name: "vscode", binary: "code", key: "servers", jsonc: true,
 		userPath: func(h string) string {
 			return filepath.Join(appSupportDir(h, "Code"), "User", "mcp.json")
 		},
@@ -126,9 +134,12 @@ func NewClaudeDesktopMerger(baseDir string) Client {
 }
 
 // NewWindsurfMerger returns the Windsurf client (user scope only).
-// UNVERIFIED against official docs: docs.windsurf.com now redirects to the
-// Devin docs, which no longer describe ~/.codeium/windsurf/mcp_config.json.
-// The path and "mcpServers" shape follow Windsurf's long-standing convention.
+// UNVERIFIED against official docs (checked 2026-11-27):
+// https://docs.windsurf.com/windsurf/cascade/mcp now redirects (307) to
+// https://docs.devin.ai/desktop/cascade/mcp, which documents Devin paths
+// (~/.config/devin/mcp_config.json) and no longer mentions
+// ~/.codeium/windsurf/mcp_config.json. The path and "mcpServers" shape keep
+// Windsurf's long-standing convention until the docs say otherwise.
 func NewWindsurfMerger(baseDir string) Client {
 	return newJSONClient(jsonSpec{
 		name: "windsurf", binary: "windsurf", key: "mcpServers",
@@ -183,7 +194,16 @@ func (j *jsonClient) Merge(absCmd string, force bool) (Outcome, error) {
 	if path == "" {
 		return OutcomeError, fmt.Errorf("%s: cannot resolve config path", j.spec.name)
 	}
-	root, err := loadJSONMap(path)
+	var (
+		root  map[string]json.RawMessage
+		lossy bool
+		err   error
+	)
+	if j.spec.jsonc {
+		root, lossy, err = loadJSONCMap(path)
+	} else {
+		root, err = loadJSONMap(path)
+	}
 	if err != nil {
 		return OutcomeError, fmt.Errorf("%s: read config: %w", j.spec.name, err)
 	}
@@ -193,6 +213,10 @@ func (j *jsonClient) Merge(absCmd string, force bool) (Outcome, error) {
 	}
 	if _, exists := servers[entryName]; exists && !force {
 		return OutcomeAlreadyExists, nil
+	}
+	if lossy && !force {
+		return OutcomeError, fmt.Errorf(
+			"%s: config contains JSONC comments or trailing commas; use --force to strip them and proceed", j.spec.name)
 	}
 	raw, err := json.Marshal(j.spec.entry(absCmd))
 	if err != nil {
@@ -215,7 +239,7 @@ func (j *jsonClient) Preview(absCmd string) (string, error) {
 }
 
 func (j *jsonClient) Remove() (Outcome, error) {
-	out, err := jsonRemoveEntry(j.ConfigPath(), j.spec.key)
+	out, err := jsonRemoveEntryOpt(j.ConfigPath(), j.spec.key, j.spec.jsonc)
 	if err != nil {
 		return OutcomeError, fmt.Errorf("%s: %w", j.spec.name, err)
 	}
@@ -223,5 +247,5 @@ func (j *jsonClient) Remove() (Outcome, error) {
 }
 
 func (j *jsonClient) EntryCommand() (string, bool, error) {
-	return jsonLookupCommand(j.ConfigPath(), j.spec.key)
+	return jsonLookupCommandOpt(j.ConfigPath(), j.spec.key, j.spec.jsonc)
 }

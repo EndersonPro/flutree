@@ -425,14 +425,14 @@ The installer detects which clients are present, writes the entry non-destructiv
 
 `flutree mcp uninstall [--client ...] [--scope ...] [--dry-run] [--json]` removes only the flutree entry and reports `removed`, `not_found` (client present, no flutree entry) or `not_installed`.
 
-`flutree mcp doctor [--scope ...] [--json]` reports the resolved binary (warning when it is a temp or `go run` path), per client whether it was detected, its config path, whether the flutree entry exists and whether its command is an existing executable, plus a live `mcp serve` initialize handshake (5s timeout). It prints `[OK]` / `[WARN]` / `[ERR]` lines and exits 1 when a command path is broken or the handshake fails.
+`flutree mcp doctor [--scope ...] [--json]` reports the resolved binary (warning when it is a temp or `go run` path), per client whether it was detected, its config path, whether the flutree entry exists and whether its command is an existing executable, plus a live `mcp serve` initialize handshake (5s timeout). It prints `[OK]` / `[-]` (detected client with no flutree entry, informational) / `[WARN]` / `[ERR]` lines and exits 1 when a command path is broken or the handshake fails.
 
 ### Per-client config file locations
 
 | Client | User scope | Project scope | Key |
 |--------|-----------|---------------|-----|
 | Claude Code | `~/.claude.json` | `.mcp.json` | `mcpServers.flutree` |
-| OpenCode | `~/.config/opencode/opencode.json` | `opencode.json` | `mcp.flutree` |
+| OpenCode | `~/.config/opencode/opencode.json` | `opencode.json` | `mcp.servers.flutree` (V2, used for new files); an existing legacy `mcp.flutree` layout is kept, and uninstall/doctor read both |
 | Codex | `~/.codex/config.toml` | `.codex/config.toml` | `[mcp_servers.flutree]` |
 | Cursor | `~/.cursor/mcp.json` | `.cursor/mcp.json` | `mcpServers.flutree` |
 | VS Code (Copilot) | `<VS Code user dir>/User/mcp.json` | `.vscode/mcp.json` | `servers.flutree` |

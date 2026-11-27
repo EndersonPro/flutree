@@ -18,8 +18,8 @@ type doctorReport struct {
 }
 
 // newMCPDoctorCmd diagnoses the binary, each client's config entry and a live
-// `mcp serve` handshake. Missing entries are warnings; a broken command path or
-// a failed handshake is an error (exit 1).
+// `mcp serve` handshake. A detected client without a flutree entry is informational; a broken
+// command path or a failed handshake is an error (exit 1).
 func newMCPDoctorCmd() *cobra.Command {
 	var scope string
 	cmd := &cobra.Command{
@@ -28,7 +28,7 @@ func newMCPDoctorCmd() *cobra.Command {
 		Long: "Report the resolved flutree binary, per client whether it was detected, its config path, " +
 			"whether the flutree entry exists and its command is an existing executable, and run a live " +
 			"`mcp serve` initialize handshake (5s timeout).\n\n" +
-			"A missing entry is a [WARN]; a broken command path or a failed handshake is an [ERR] and exits 1.",
+			"A detected client without a flutree entry is informational ([-]); a [WARN] is reserved for real warnings such as a temporary binary path; a broken command path or a failed handshake is an [ERR] and exits 1.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			installer := mcpinstall.DefaultInstaller()
@@ -75,7 +75,7 @@ func newMCPDoctorCmd() *cobra.Command {
 					case c.Message != "":
 						fmt.Fprintf(out, "[ERR]  %s: %s\n", c.Client, c.Message)
 					case !c.EntryPresent:
-						fmt.Fprintf(out, "[WARN] %s: no flutree entry in %s (run `flutree mcp install`)\n", c.Client, c.ConfigPath)
+						fmt.Fprintf(out, "[-]    %s: no flutree entry (%s)\n", c.Client, c.ConfigPath)
 					case !c.CommandOK:
 						fmt.Fprintf(out, "[ERR]  %s: command %q is not an existing executable (%s)\n", c.Client, c.Command, c.ConfigPath)
 					default:

@@ -195,7 +195,7 @@ func TestMCPInstallScopeProjectExistingClients(t *testing.T) {
 	res.requireCode(t, 0)
 	assertEntry(t, readJSON(t, filepath.Join(cwd, ".mcp.json")), "mcpServers", true)
 	oc := readJSON(t, filepath.Join(cwd, "opencode.json"))
-	if _, ok := oc["mcp"].(map[string]any)["flutree"]; !ok {
+	if _, ok := oc["mcp"].(map[string]any)["servers"].(map[string]any)["flutree"]; !ok {
 		t.Fatalf("opencode project entry missing: %v", oc)
 	}
 	toml, err := os.ReadFile(filepath.Join(cwd, ".codex", "config.toml"))
@@ -368,22 +368,6 @@ func TestMCPDoctorHealthyInstall(t *testing.T) {
 	}
 }
 
-func TestMCPDoctorMissingEntryWarns(t *testing.T) {
-	home := t.TempDir()
-	mustMkdir(t, filepath.Join(home, ".cursor"))
-
-	res, d := runDoctor(t, home)
-	res.requireCode(t, 0)
-	c := d.client("cursor")
-	if !c.Detected || c.EntryPresent {
-		t.Fatalf("expected detected without entry: %s", res.stdout)
-	}
-	text := runE2E(t, t.TempDir(), installEnv(t, home), "mcp", "doctor")
-	if !strings.Contains(text.stdout, "[WARN] cursor") {
-		t.Fatalf("expected [WARN] for missing entry, got:\n%s", text.stdout)
-	}
-}
-
 func TestMCPDoctorBrokenCommandPathFails(t *testing.T) {
 	home := t.TempDir()
 	mustWrite(t, filepath.Join(home, ".cursor", "mcp.json"),
@@ -411,5 +395,177 @@ func TestMCPDoctorFailsOnUnreadableClientConfig(t *testing.T) {
 	res.requireCode(t, 1)
 	if !strings.Contains(res.stdout, "[ERR]  cursor:") {
 		t.Fatalf("expected an [ERR] line for cursor, got:\n%s", res.stdout)
+	}
+}
+
+func openCodeFile(home string) string {
+	return filepath.Join(home, ".config", "opencode", "opencode.json")
+}
+
+func objAt(t *testing.T, v any, what string) map[string]any {
+	t.Helper()
+	m, ok := v.(map[string]any)
+	if !ok {
+		t.Fatalf("%s is not an object: %v", what, v)
+	}
+	return m
+}
+
+// OpenCode (current docs, "V2") keeps servers under mcp.servers.<name>:
+// https://opencode.ai/docs/mcp-servers/
+func TestMCPInstallOpenCodeServersLayoutIsKeptAndUninstalled(t *testing.T) {
+	home := t.TempDir()
+	mustWrite(t, openCodeFile(home), `{"theme":"dark","mcp":{"timeout":5000,"servers":{"other":{"type":"local","command":["x"]}}}}`)
+	env := installEnv(t, home)
+
+	runE2E(t, t.TempDir(), env, "mcp", "install", "--client", "opencode").requireCode(t, 0)
+	mcp := objAt(t, readJSON(t, openCodeFile(home))["mcp"], "mcp")
+	servers := objAt(t, mcp["servers"], "mcp.servers")
+	fl := objAt(t, servers["flutree"], "mcp.servers.flutree")
+	if fl["type"] != "local" {
+		t.Fatalf("entry = %v", fl)
+	}
+	if _, stray := mcp["flutree"]; stray {
+		t.Fatalf("flutree must not be written directly under mcp: %v", mcp)
+	}
+	if _, ok := servers["other"]; !ok || mcp["timeout"] == nil {
+		t.Fatalf("existing config lost: %v", mcp)
+	}
+
+	dres, rep := runDoctor(t, home)
+	dres.requireCode(t, 0)
+	if c := rep.client("opencode"); !c.EntryPresent || !c.CommandOK {
+		t.Fatalf("doctor must find the mcp.servers entry: %s", dres.stdout)
+	}
+
+	res := runE2E(t, t.TempDir(), env, "mcp", "uninstall", "--client", "opencode")
+	res.requireCode(t, 0)
+	if !strings.Contains(res.stdout, "removed") {
+		t.Fatalf("expected removed, got %s", res.stdout)
+	}
+	mcp = objAt(t, readJSON(t, openCodeFile(home))["mcp"], "mcp")
+	servers = objAt(t, mcp["servers"], "mcp.servers")
+	if _, ok := servers["flutree"]; ok {
+		t.Fatalf("flutree not removed: %v", servers)
+	}
+	if _, ok := servers["other"]; !ok || mcp["timeout"] == nil {
+		t.Fatalf("uninstall removed more than flutree: %v", mcp)
+	}
+}
+
+func TestMCPInstallOpenCodeLegacyLayoutIsKept(t *testing.T) {
+	home := t.TempDir()
+	mustWrite(t, openCodeFile(home), `{"mcp":{"other":{"type":"local","command":["x"],"enabled":true}}}`)
+	env := installEnv(t, home)
+
+	runE2E(t, t.TempDir(), env, "mcp", "install", "--client", "opencode").requireCode(t, 0)
+	mcp := objAt(t, readJSON(t, openCodeFile(home))["mcp"], "mcp")
+	if _, ok := mcp["flutree"]; !ok {
+		t.Fatalf("legacy layout must keep mcp.flutree: %v", mcp)
+	}
+	if _, ok := mcp["servers"]; ok {
+		t.Fatalf("legacy layout must not gain mcp.servers: %v", mcp)
+	}
+
+	res := runE2E(t, t.TempDir(), env, "mcp", "uninstall", "--client", "opencode")
+	res.requireCode(t, 0)
+	if !strings.Contains(res.stdout, "removed") {
+		t.Fatalf("expected removed, got %s", res.stdout)
+	}
+	mcp = objAt(t, readJSON(t, openCodeFile(home))["mcp"], "mcp")
+	if _, ok := mcp["flutree"]; ok {
+		t.Fatalf("flutree not removed: %v", mcp)
+	}
+	if _, ok := mcp["other"]; !ok {
+		t.Fatalf("uninstall removed more than flutree: %v", mcp)
+	}
+}
+
+func TestMCPInstallOpenCodeNewFileUsesServersLayout(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".config", "opencode"))
+	runE2E(t, t.TempDir(), installEnv(t, home), "mcp", "install", "--client", "opencode").requireCode(t, 0)
+	mcp := objAt(t, readJSON(t, openCodeFile(home))["mcp"], "mcp")
+	servers := objAt(t, mcp["servers"], "mcp.servers")
+	if _, ok := servers["flutree"]; !ok {
+		t.Fatalf("new file must use mcp.servers.flutree: %v", mcp)
+	}
+	if _, ok := mcp["flutree"]; ok {
+		t.Fatalf("new file must not use mcp.flutree: %v", mcp)
+	}
+}
+
+// VS Code mcp.json may hold comments and trailing commas.
+const vscodeJSONC = `{
+  // my servers
+  "servers": {
+    "other": {"type": "stdio", "command": "x",},
+  },
+}
+`
+
+func TestMCPVSCodeJSONC(t *testing.T) {
+	home := t.TempDir()
+	file := filepath.Join(appDir(home, "Code"), "User", "mcp.json")
+	mustWrite(t, file, vscodeJSONC)
+	env := installEnv(t, home)
+
+	// Install refuses to drop the comments, and leaves the file untouched.
+	res := runE2E(t, t.TempDir(), env, "mcp", "install", "--client", "vscode")
+	if !strings.Contains(res.stdout+res.stderr, "--force") {
+		t.Fatalf("expected a --force hint, got stdout=%s stderr=%s", res.stdout, res.stderr)
+	}
+	if b, _ := os.ReadFile(file); string(b) != vscodeJSONC {
+		t.Fatalf("file changed without --force:\n%s", b)
+	}
+
+	// Doctor parses the file (no entry yet is not a failure).
+	res, d := runDoctor(t, home)
+	res.requireCode(t, 0)
+	if c := d.client("vscode"); !c.Detected || c.EntryPresent {
+		t.Fatalf("doctor must read the JSONC file: %s", res.stdout)
+	}
+
+	// --force strips comments and writes.
+	runE2E(t, t.TempDir(), env, "mcp", "install", "--client", "vscode", "--force").requireCode(t, 0)
+	assertEntry(t, readJSON(t, file), "servers", true)
+
+	// Doctor finds the entry.
+	res, d = runDoctor(t, home)
+	res.requireCode(t, 0)
+	if c := d.client("vscode"); !c.EntryPresent || !c.CommandOK {
+		t.Fatalf("doctor must find the entry: %s", res.stdout)
+	}
+
+	// Commented file with an entry: doctor reads it, uninstall refuses to rewrite.
+	withEntry := `{
+  // keep me
+  "servers": {"flutree": {"type":"stdio","command":"` + os.Args[0] + `","args":["mcp","serve"]},},
+}
+`
+	mustWrite(t, file, withEntry)
+	res, d = runDoctor(t, home)
+	if c := d.client("vscode"); !c.EntryPresent {
+		t.Fatalf("doctor must find the entry in a JSONC file: %s", res.stdout)
+	}
+	res = runE2E(t, t.TempDir(), env, "mcp", "uninstall", "--client", "vscode")
+	if !strings.Contains(res.stdout+res.stderr, "by hand") {
+		t.Fatalf("expected manual-removal hint, got stdout=%s stderr=%s", res.stdout, res.stderr)
+	}
+	if b, _ := os.ReadFile(file); string(b) != withEntry {
+		t.Fatalf("uninstall rewrote a commented file:\n%s", b)
+	}
+}
+
+func TestMCPDoctorMissingEntryIsInformational(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".cursor"))
+	text := runE2E(t, t.TempDir(), installEnv(t, home), "mcp", "doctor")
+	text.requireCode(t, 0)
+	if !strings.Contains(text.stdout, "[-]    cursor: no flutree entry (") {
+		t.Fatalf("expected an informational [-] line, got:\n%s", text.stdout)
+	}
+	if strings.Contains(text.stdout, "[WARN] cursor") {
+		t.Fatalf("missing entry must not warn:\n%s", text.stdout)
 	}
 }
