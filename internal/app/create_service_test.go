@@ -1069,3 +1069,5 @@ func (f *fakeCreateGit) CurrentBranch(string) (string, error) { return "main", n
 func (f *fakeCreateGit) ListBranches(string) ([]string, []string, error) {
 	return []string{"main"}, []string{"origin/main"}, nil
 }
+
+func (f *fakeCreateGit) AheadBehind(string, string) (int, int, error) { return 0, 0, nil }

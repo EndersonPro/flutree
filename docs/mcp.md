@@ -153,9 +153,10 @@ Read-only state of one workspace.
 
 - Arguments: `name` (required).
 - Result: `{name, branch, status, container_path, workspace_file?, root, packages[], pubspec_overrides}`.
-  `root` and each package are `{name, role, path, repo_root, branch, exists, dirty}`;
+  `root` and each package are `{name, role, path, repo_root, branch, exists, dirty, base_branch?, ahead?, behind?, ahead_behind_note?}`;
   `pubspec_overrides` is `{path, exists, entries: {<package>: <spec>}}`.
-- Ahead/behind versus the base branch is not reported: the registry does not store the base each worktree was created from.
+- `ahead` / `behind` compare each worktree `HEAD` with the base it was created from (`git rev-list --left-right --count <base>...HEAD`): `ahead` is the commits only in the worktree, `behind` the commits only in the base. The base is stored in the registry as the optional `base_branch` field and resolved like at creation (a local commit-ish, else `origin/<base>`).
+- Worktrees created before the base was stored, or whose base no longer resolves, omit `ahead`/`behind` and carry a short `ahead_behind_note`. The status never fails because of it.
 - Errors: `precondition` when the workspace is not registered.
 
 ### Existing tools

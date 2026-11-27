@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,9 @@ type fakeGit struct {
 	worktrees   map[string][]domain.GitWorktreeEntry
 	dirtyByPath map[string]bool
 	removed     []string
+	// aheadBehind maps a worktree path to {ahead, behind}; a missing path
+	// makes AheadBehind fail like an unresolvable base.
+	aheadBehind map[string][2]int
 }
 
 func (f *fakeGit) EnsureRepo() (string, error) { return f.currentRepo, nil }
@@ -463,4 +467,11 @@ func TestListGlobalAllIncludesUnmanagedAcrossRegisteredRepos(t *testing.T) {
 func (f *fakeGit) CurrentBranch(string) (string, error) { return "main", nil }
 func (f *fakeGit) ListBranches(string) ([]string, []string, error) {
 	return []string{"main"}, []string{"origin/main"}, nil
+}
+
+func (f *fakeGit) AheadBehind(path, base string) (int, int, error) {
+	if counts, ok := f.aheadBehind[path]; ok {
+		return counts[0], counts[1], nil
+	}
+	return 0, 0, errors.New("base " + base + " does not resolve")
 }

@@ -260,11 +260,12 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 	}
 
 	rootRecord := domain.RegistryRecord{
-		Name:     plan.NormalizedName,
-		Branch:   plan.Root.Branch,
-		Path:     plan.Root.Path,
-		RepoRoot: plan.Root.Repo.RepoRoot,
-		Status:   "active",
+		Name:       plan.NormalizedName,
+		Branch:     plan.Root.Branch,
+		Path:       plan.Root.Path,
+		RepoRoot:   plan.Root.Repo.RepoRoot,
+		Status:     "active",
+		BaseBranch: plan.Root.BaseBranch,
 	}
 	if err := s.registry.Upsert(rootRecord); err != nil {
 		rollback()
@@ -274,11 +275,12 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 
 	for _, pkg := range plan.Packages {
 		record := domain.RegistryRecord{
-			Name:     fmt.Sprintf("%s__pkg__%s", plan.NormalizedName, pkg.Repo.Name),
-			Branch:   pkg.Branch,
-			Path:     pkg.Path,
-			RepoRoot: pkg.Repo.RepoRoot,
-			Status:   "active",
+			Name:       fmt.Sprintf("%s__pkg__%s", plan.NormalizedName, pkg.Repo.Name),
+			Branch:     pkg.Branch,
+			Path:       pkg.Path,
+			RepoRoot:   pkg.Repo.RepoRoot,
+			Status:     "active",
+			BaseBranch: pkg.BaseBranch,
 		}
 		if err := s.registry.Upsert(record); err != nil {
 			rollback()

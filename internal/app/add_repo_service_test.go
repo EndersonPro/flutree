@@ -970,3 +970,5 @@ func (f *fakeAddRepoGit) CurrentBranch(string) (string, error) { return "main", 
 func (f *fakeAddRepoGit) ListBranches(string) ([]string, []string, error) {
 	return []string{"main"}, []string{"origin/main"}, nil
 }
+
+func (f *fakeAddRepoGit) AheadBehind(string, string) (int, int, error) { return 0, 0, nil }

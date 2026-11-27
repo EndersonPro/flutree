@@ -82,6 +82,13 @@ type WorktreeStatus struct {
 	Branch   string `json:"branch"`
 	Exists   bool   `json:"exists"`
 	Dirty    bool   `json:"dirty"`
+	// BaseBranch, Ahead and Behind compare the worktree HEAD with the base it
+	// was created from. They are omitted when the registry has no base or the
+	// base no longer resolves; AheadBehindNote then says why.
+	BaseBranch      string `json:"base_branch,omitempty"`
+	Ahead           *int   `json:"ahead,omitempty"`
+	Behind          *int   `json:"behind,omitempty"`
+	AheadBehindNote string `json:"ahead_behind_note,omitempty"`
 }
 
 // OverridesInfo describes the generated pubspec_overrides.yaml of a workspace.
@@ -113,6 +120,9 @@ type RegistryRecord struct {
 	RepoRoot  string `json:"repo_root"`
 	CreatedAt string `json:"created_at,omitempty"`
 	Status    string `json:"status"`
+	// BaseBranch is the base the worktree's branch was created from, as the
+	// user gave it. Optional: records written before it existed omit it.
+	BaseBranch string `json:"base_branch,omitempty"`
 }
 
 type RegistryDocument struct {

@@ -33,6 +33,11 @@ type GitPort interface {
 	// ListBranches returns local branches and origin/* remote-tracking branches
 	// without touching the network.
 	ListBranches(repoRoot string) (local, remote []string, err error)
+	// AheadBehind counts the commits of the worktree HEAD missing from base
+	// (ahead) and the commits of base missing from HEAD (behind). base is
+	// resolved like a worktree start point: a local commit-ish, else
+	// origin/<base>. It returns an error when base cannot be resolved.
+	AheadBehind(worktreePath, base string) (ahead, behind int, err error)
 }
 
 // SDKPort reads Flutter SDK pins and runs the SDK manager in a worktree.

@@ -110,3 +110,39 @@ func TestDiscoverReposIncludesCurrentBranch(t *testing.T) {
 		t.Fatal("empty scope must be an error")
 	}
 }
+
+func TestWorkspaceStatusReportsAheadBehindAgainstStoredBase(t *testing.T) {
+	container := t.TempDir()
+	rootPath := filepath.Join(container, "root", "app")
+	pkgPath := filepath.Join(container, "packages", "core")
+	oldPath := filepath.Join(container, "packages", "old")
+	for _, p := range []string{rootPath, pkgPath, oldPath} {
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reg := &fakeRegistry{records: []domain.RegistryRecord{
+		{Name: "ws", Branch: "feature/ws", Path: rootPath, RepoRoot: "/src/app", Status: "active", BaseBranch: "main"},
+		{Name: "ws__pkg__core", Branch: "feature/ws", Path: pkgPath, RepoRoot: "/src/core", Status: "active", BaseBranch: "gone"},
+		{Name: "ws__pkg__old", Branch: "feature/ws", Path: oldPath, RepoRoot: "/src/old", Status: "active"},
+	}}
+	git := &fakeGit{aheadBehind: map[string][2]int{rootPath: {2, 1}}}
+
+	got, err := NewInspectService(git, nil, reg).WorkspaceStatus("ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Root.BaseBranch != "main" || got.Root.Ahead == nil || *got.Root.Ahead != 2 || got.Root.Behind == nil || *got.Root.Behind != 1 || got.Root.AheadBehindNote != "" {
+		t.Fatalf("root = %+v, want base main ahead 2 behind 1", got.Root)
+	}
+	byName := map[string]domain.WorktreeStatus{}
+	for _, pkg := range got.Packages {
+		byName[pkg.Name] = pkg
+	}
+	if pkg := byName["core"]; pkg.Ahead != nil || pkg.Behind != nil || pkg.AheadBehindNote == "" || pkg.BaseBranch != "gone" {
+		t.Errorf("an unresolvable base must omit counts and carry a note: %+v", pkg)
+	}
+	if pkg := byName["old"]; pkg.Ahead != nil || pkg.Behind != nil || pkg.AheadBehindNote == "" || pkg.BaseBranch != "" {
+		t.Errorf("a record without base must omit counts and carry a note: %+v", pkg)
+	}
+}

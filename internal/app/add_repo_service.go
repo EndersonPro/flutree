@@ -234,11 +234,12 @@ func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, e
 		created = append(created, plan)
 
 		record := domain.RegistryRecord{
-			Name:     rootRecord.Name + "__pkg__" + plan.Repo.Name,
-			Branch:   plan.Branch,
-			Path:     plan.Path,
-			RepoRoot: plan.Repo.RepoRoot,
-			Status:   "active",
+			Name:       rootRecord.Name + "__pkg__" + plan.Repo.Name,
+			Branch:     plan.Branch,
+			Path:       plan.Path,
+			RepoRoot:   plan.Repo.RepoRoot,
+			Status:     "active",
+			BaseBranch: plan.BaseBranch,
 		}
 		if err := s.registry.Upsert(record); err != nil {
 			rollback()
@@ -250,11 +251,12 @@ func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, e
 	allPackages := append([]domain.RegistryRecord{}, existingPackages...)
 	for _, plan := range newPlans {
 		allPackages = append(allPackages, domain.RegistryRecord{
-			Name:     rootRecord.Name + "__pkg__" + plan.Repo.Name,
-			Branch:   plan.Branch,
-			Path:     plan.Path,
-			RepoRoot: plan.Repo.RepoRoot,
-			Status:   "active",
+			Name:       rootRecord.Name + "__pkg__" + plan.Repo.Name,
+			Branch:     plan.Branch,
+			Path:       plan.Path,
+			RepoRoot:   plan.Repo.RepoRoot,
+			Status:     "active",
+			BaseBranch: plan.BaseBranch,
 		})
 	}
 

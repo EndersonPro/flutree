@@ -385,7 +385,7 @@ func makeCreateWorkspaceHandler(svc MCPServices) toolHandler {
 
 func buildWorkspaceStatusTool() mcplib.Tool {
 	return mcplib.NewTool("workspace_status",
-		mcplib.WithDescription("Inspect one existing workspace: for the root and every package its path, branch, whether the folder still exists and whether it has uncommitted changes (dirty), plus the workspace file and whether pubspec_overrides.yaml exists with its parsed entries. Use it after creating or changing a workspace, and BEFORE complete_worktree to see what would be lost. Ahead/behind versus the base branch is not reported because the registry does not store each worktree's base. Read-only. Fails with category precondition when the name is not registered."),
+		mcplib.WithDescription("Inspect one existing workspace: for the root and every package its path, branch, whether the folder still exists and whether it has uncommitted changes (dirty), plus the workspace file and whether pubspec_overrides.yaml exists with its parsed entries. Use it after creating or changing a workspace, and BEFORE complete_worktree to see what would be lost. For each worktree it also reports base_branch plus ahead (commits in the worktree HEAD not in the base) and behind (commits in the base not in HEAD); when the registry has no base for a worktree (created by an older flutree) or the base no longer resolves, ahead/behind are omitted and ahead_behind_note says why. Read-only. Fails with category precondition when the name is not registered."),
 		mcplib.WithString("name", mcplib.Required(), mcplib.Description("Workspace name, as shown by list_worktrees.")),
 		mcplib.WithReadOnlyHintAnnotation(true), mcplib.WithDestructiveHintAnnotation(false),
 	)

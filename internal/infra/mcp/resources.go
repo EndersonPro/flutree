@@ -54,7 +54,7 @@ func registerResources(s *mcpserver.MCPServer, svc MCPServices) {
 
 	s.AddResourceTemplate(
 		mcplib.NewResourceTemplate(workspaceURITemplate, "flutree workspace",
-			mcplib.WithTemplateDescription("State of one workspace by name: branch, root and package worktrees (name, path, repo_root, branch, exists, dirty), the parsed pubspec_overrides.yaml entries and the .code-workspace file path. Same data as the workspace_status tool."),
+			mcplib.WithTemplateDescription("State of one workspace by name: branch, root and package worktrees (name, path, repo_root, branch, exists, dirty), base_branch with ahead/behind counts when known (else ahead_behind_note), the parsed pubspec_overrides.yaml entries and the .code-workspace file path. Same data as the workspace_status tool."),
 			mcplib.WithTemplateMIMEType("application/json")),
 		func(_ context.Context, req mcplib.ReadResourceRequest) ([]mcplib.ResourceContents, error) {
 			name, err := url.PathUnescape(strings.TrimPrefix(req.Params.URI, workspaceURIPrefix))

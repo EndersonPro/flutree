@@ -530,3 +530,87 @@ func TestE2EMCPNewToolsReturnStructuredContent(t *testing.T) {
 		t.Errorf("discover_repos must return structuredContent, got %s", raw)
 	}
 }
+
+func intField(t *testing.T, m map[string]any, key string) int {
+	t.Helper()
+	v, ok := m[key].(float64)
+	if !ok {
+		t.Fatalf("%s missing or not a number in %v", key, m)
+	}
+	return int(v)
+}
+
+func TestE2EMCPWorkspaceStatusReportsAheadBehind(t *testing.T) {
+	ws := createWorkspace(t, "feature-ahead", []string{"core-pkg"}, "")
+	env := testEnv(ws.home)
+	cwd := t.TempDir()
+
+	root := asMap(t, toolJSON(t, cwd, env, "workspace_status", map[string]any{"name": ws.name})["root"])
+	if root["base_branch"] != "main" || intField(t, root, "ahead") != 0 || intField(t, root, "behind") != 0 {
+		t.Errorf("fresh root should be 0/0 against main: %v", root)
+	}
+
+	writeFile(t, filepath.Join(ws.rootWT, "lib", "feature.dart"), "void feature() {}\n")
+	runGit(t, ws.rootWT, "add", "-A")
+	runGit(t, ws.rootWT, "commit", "-m", "feature work")
+	status := toolJSON(t, cwd, env, "workspace_status", map[string]any{"name": ws.name})
+	root = asMap(t, status["root"])
+	if intField(t, root, "ahead") != 1 || intField(t, root, "behind") != 0 {
+		t.Errorf("after one commit root should be ahead=1 behind=0: %v", root)
+	}
+	if pkg := asMap(t, asSlice(t, status["packages"])[0]); intField(t, pkg, "ahead") != 0 || intField(t, pkg, "behind") != 0 {
+		t.Errorf("untouched package should be 0/0: %v", pkg)
+	}
+
+	writeFile(t, filepath.Join(ws.rootRepo, "upstream.txt"), "x\n")
+	runGit(t, ws.rootRepo, "add", "-A")
+	runGit(t, ws.rootRepo, "commit", "-m", "base moved")
+	root = asMap(t, toolJSON(t, cwd, env, "workspace_status", map[string]any{"name": ws.name})["root"])
+	if intField(t, root, "ahead") != 1 || intField(t, root, "behind") != 1 {
+		t.Errorf("after a new base commit root should be ahead=1 behind=1: %v", root)
+	}
+
+	var viaResource map[string]any
+	if err := json.Unmarshal([]byte(readMCPResource(t, cwd, env, "flutree://workspace/"+ws.name)), &viaResource); err != nil {
+		t.Fatal(err)
+	}
+	if got := asMap(t, viaResource["root"]); intField(t, got, "behind") != 1 || got["base_branch"] != "main" {
+		t.Errorf("workspace resource must carry base and counts: %v", got)
+	}
+}
+
+func TestE2EMCPWorkspaceStatusOmitsAheadBehindWithoutBase(t *testing.T) {
+	ws := createWorkspace(t, "feature-nobase", []string{"core-pkg"}, "")
+	stripBaseBranch(t, ws.home)
+	env := testEnv(ws.home)
+
+	status := toolJSON(t, t.TempDir(), env, "workspace_status", map[string]any{"name": ws.name})
+	for _, wt := range []map[string]any{asMap(t, status["root"]), asMap(t, asSlice(t, status["packages"])[0])} {
+		if _, has := wt["ahead"]; has {
+			t.Errorf("ahead must be omitted without a base: %v", wt)
+		}
+		if _, has := wt["behind"]; has {
+			t.Errorf("behind must be omitted without a base: %v", wt)
+		}
+		if note, _ := wt["ahead_behind_note"].(string); note == "" {
+			t.Errorf("ahead_behind_note must explain the omission: %v", wt)
+		}
+	}
+
+	// A recorded base that no longer resolves degrades the same way.
+	_, records := readRegistryRecords(t, ws.home)
+	records[0]["base_branch"] = "no-such-base"
+	b, _ := json.Marshal(map[string]any{"version": 1, "records": records})
+	if err := os.WriteFile(registryPath(ws.home), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	status = toolJSON(t, t.TempDir(), env, "workspace_status", map[string]any{"name": ws.name})
+	for _, wt := range []map[string]any{asMap(t, status["root"]), asMap(t, asSlice(t, status["packages"])[0])} {
+		if note, _ := wt["ahead_behind_note"].(string); note == "" {
+			t.Errorf("an unresolvable base must carry a note: %v", wt)
+		}
+		if _, has := wt["ahead"]; has {
+			t.Errorf("ahead must be omitted for an unresolvable base: %v", wt)
+		}
+	}
+}

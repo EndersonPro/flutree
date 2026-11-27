@@ -313,6 +313,33 @@ func (g *Gateway) resolveStartPoint(repoRoot, base string) (string, bool) {
 	return base, false
 }
 
+// AheadBehind counts how far the worktree HEAD is ahead of and behind base.
+// base is resolved with resolveStartPoint, so it matches creation: a local
+// commit-ish, else origin/<base>.
+func (g *Gateway) AheadBehind(worktreePath, base string) (int, int, error) {
+	ref, ok := g.resolveStartPoint(worktreePath, strings.TrimSpace(base))
+	if !ok {
+		return 0, 0, domain.NewError(domain.CategoryGit, 1, "Base branch '"+base+"' does not resolve.", worktreePath, nil)
+	}
+	out, err := g.run(worktreePath, "rev-list", "--left-right", "--count", ref+"...HEAD")
+	if err != nil {
+		return 0, 0, err
+	}
+	parts := strings.Fields(out)
+	if len(parts) != 2 {
+		return 0, 0, domain.NewError(domain.CategoryGit, 1, "Unexpected rev-list output.", out, nil)
+	}
+	behind, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, domain.NewError(domain.CategoryGit, 1, "Failed to parse behind counter.", out, err)
+	}
+	ahead, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, domain.NewError(domain.CategoryGit, 1, "Failed to parse ahead counter.", out, err)
+	}
+	return ahead, behind, nil
+}
+
 // DeleteBranch force-deletes a local branch. Git refuses a checked-out branch.
 func (g *Gateway) DeleteBranch(repoRoot, branch string) error {
 	_, err := g.run(repoRoot, "branch", "-D", strings.TrimSpace(branch))

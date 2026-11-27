@@ -126,9 +126,9 @@ func (s *InspectService) ListBranches(repoPath string) (domain.BranchList, error
 // WorkspaceStatus reports the worktrees of a managed workspace with their git
 // dirtiness and the generated pubspec_overrides.yaml.
 //
-// Ahead/behind versus the base branch is deliberately not reported: the
-// registry does not record the base each worktree was created from, so any
-// number would be a guess.
+// Ahead/behind versus the base each worktree was created from is reported
+// when the registry stores that base and it still resolves; otherwise the
+// counts are omitted and ahead_behind_note says why. It never fails the status.
 func (s *InspectService) WorkspaceStatus(name string) (domain.WorkspaceStatus, error) {
 	records, err := s.registry.ListRecords()
 	if err != nil {
@@ -196,6 +196,22 @@ func (s *InspectService) worktreeStatus(rec domain.RegistryRecord, role string) 
 	if info, err := os.Stat(rec.Path); err == nil && info.IsDir() {
 		out.Exists = true
 		out.Dirty, _ = s.git.IsDirty(rec.Path)
+	}
+	base := strings.TrimSpace(rec.BaseBranch)
+	switch {
+	case base == "":
+		out.AheadBehindNote = "No base branch is recorded for this worktree (created before flutree stored it), so ahead/behind is not available."
+	case !out.Exists:
+		out.BaseBranch = base
+		out.AheadBehindNote = "The worktree folder no longer exists, so ahead/behind is not available."
+	default:
+		out.BaseBranch = base
+		ahead, behind, err := s.git.AheadBehind(rec.Path, base)
+		if err != nil {
+			out.AheadBehindNote = "Base '" + base + "' could not be resolved in this repository, so ahead/behind is not available."
+		} else {
+			out.Ahead, out.Behind = &ahead, &behind
+		}
 	}
 	return out
 }
