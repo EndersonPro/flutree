@@ -34,6 +34,9 @@ type overrideSet map[string]*yaml.Node
 //     from the source repository to the worktree),
 //  2. entries already present in the worktree's pubspec_overrides.yaml,
 //  3. the package worktrees flutree manages.
+//
+// Plain path dependencies are carried as well (see deriveGraphOverrides) at the
+// lowest precedence, so the whole graph resolves from the worktrees.
 func writeOverrideFile(overridePath, worktreePath, sourceRepoRoot string, packages []domain.PlannedWorktree) error {
 	pubspecOverrides, err := readOverridesSection(filepath.Join(worktreePath, "pubspec.yaml"))
 	if err != nil {
@@ -46,7 +49,11 @@ func writeOverrideFile(overridePath, worktreePath, sourceRepoRoot string, packag
 		return err
 	}
 
-	merged := mergeOverrides(pubspecOverrides, existing, packageOverrides(worktreePath, packages))
+	derived, err := deriveGraphOverrides(worktreePath, sourceRepoRootOr(sourceRepoRoot, worktreePath), packages, false)
+	if err != nil {
+		return err
+	}
+	merged := mergeOverrides(derived, pubspecOverrides, existing, packageOverrides(worktreePath, packages))
 	content, err := formatOverrides(merged)
 	if err != nil {
 		return err
@@ -65,7 +72,11 @@ func buildOverrideContent(root domain.PlannedWorktree, packages []domain.Planned
 		pubspecOverrides = overrideSet{}
 	}
 	rebasePathOverrides(pubspecOverrides, root.Repo.RepoRoot, root.Path)
-	content, err := formatOverrides(mergeOverrides(pubspecOverrides, packageOverrides(root.Path, packages)))
+	derived, err := deriveGraphOverrides(root.Path, root.Repo.RepoRoot, packages, true)
+	if err != nil {
+		derived = overrideSet{}
+	}
+	content, err := formatOverrides(mergeOverrides(derived, pubspecOverrides, packageOverrides(root.Path, packages)))
 	if err != nil {
 		return emptyOverrideContent
 	}
@@ -75,6 +86,12 @@ func buildOverrideContent(root domain.PlannedWorktree, packages []domain.Planned
 // readOverridesSection returns the dependency_overrides of a pubspec-style
 // file. A missing file or section yields an empty set.
 func readOverridesSection(path string) (overrideSet, error) {
+	return readPubspecSection(path, "dependency_overrides")
+}
+
+// readPubspecSection returns the entries of one top-level mapping section of a
+// pubspec-style file. A missing file or section yields an empty set.
+func readPubspecSection(path, section string) (overrideSet, error) {
 	content, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return overrideSet{}, nil
@@ -92,15 +109,15 @@ func readOverridesSection(path string) (overrideSet, error) {
 	}
 	top := doc.Content[0]
 	for i := 0; i+1 < len(top.Content); i += 2 {
-		if top.Content[i].Value != "dependency_overrides" {
+		if top.Content[i].Value != section {
 			continue
 		}
-		section := top.Content[i+1]
-		if section.Kind != yaml.MappingNode {
+		body := top.Content[i+1]
+		if body.Kind != yaml.MappingNode {
 			return set, nil
 		}
-		for j := 0; j+1 < len(section.Content); j += 2 {
-			set[section.Content[j].Value] = section.Content[j+1]
+		for j := 0; j+1 < len(body.Content); j += 2 {
+			set[body.Content[j].Value] = body.Content[j+1]
 		}
 	}
 	return set, nil
@@ -218,4 +235,127 @@ func sourceRepoRootOr(sourceRepoRoot, fallback string) string {
 		return fallback
 	}
 	return sourceRepoRoot
+}
+
+// graphRepo pairs a repository's source checkout with the worktree flutree
+// manages for it.
+type graphRepo struct {
+	source   string
+	worktree string
+}
+
+// deriveGraphOverrides turns the relative `path:` dependencies of the root and
+// of every selected package into overrides for the root's
+// pubspec_overrides.yaml. Overrides of the root package apply to the whole
+// resolution graph, so this is the one place that can repair a path that is
+// only valid from the source checkout.
+//
+// Each path is resolved against the declaring repo's source root. A target
+// inside a selected repo maps to the same location in that repo's worktree;
+// any other target stays at its source location. Entries that already resolve
+// to the same directory from the declaring worktree need no override. The root
+// pubspec wins over packages and packages are visited by name, so the result is
+// deterministic. fromSource reads the pubspecs from the source checkouts, for
+// the dry plan before any worktree exists.
+func deriveGraphOverrides(rootWorktree, rootSource string, packages []domain.PlannedWorktree, fromSource bool) (overrideSet, error) {
+	repos := []graphRepo{{source: rootSource, worktree: rootWorktree}}
+	ordered := append([]domain.PlannedWorktree(nil), packages...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Repo.PackageName < ordered[j].Repo.PackageName })
+	for _, pkg := range ordered {
+		repos = append(repos, graphRepo{source: pkg.Repo.RepoRoot, worktree: pkg.Path})
+	}
+
+	derived := overrideSet{}
+	claimed := map[string]bool{}
+	for i, repo := range repos {
+		pubspecDir := repo.worktree
+		if fromSource {
+			pubspecDir = repo.source
+		}
+		sections := []string{"dependencies", "dev_dependencies"}
+		if i > 0 {
+			// Only the root package's own overrides apply; a package's are
+			// ignored by pub, so they are carried as plain path dependencies.
+			sections = append(sections, "dependency_overrides")
+		}
+		for _, section := range sections {
+			deps, err := readPubspecSection(filepath.Join(pubspecDir, "pubspec.yaml"), section)
+			if err != nil {
+				return nil, err
+			}
+			for _, name := range sortedNames(deps) {
+				rel, ok := pathSpec(deps[name])
+				if !ok || claimed[name] {
+					continue
+				}
+				claimed[name] = true
+				target, mapped := mapGraphTarget(repo, rel, repos)
+				original := rel
+				if !filepath.IsAbs(rel) {
+					original = filepath.Join(repo.worktree, filepath.FromSlash(rel))
+				}
+				if target == filepath.Clean(original) {
+					continue
+				}
+				if mapped {
+					if relTarget, err := filepath.Rel(rootWorktree, target); err == nil {
+						target = relTarget
+					}
+				}
+				derived[name] = pathOverrideNode(filepath.ToSlash(target))
+			}
+		}
+	}
+	return derived, nil
+}
+
+// mapGraphTarget resolves a declared path against the declaring repo's source
+// root and maps it into the worktree of the selected repo that contains it, or
+// keeps the source location when no selected repo does.
+func mapGraphTarget(declaring graphRepo, rel string, repos []graphRepo) (string, bool) {
+	if filepath.IsAbs(rel) {
+		return filepath.Clean(rel), false
+	}
+	target := filepath.Join(declaring.source, filepath.FromSlash(rel))
+	best, bestRel := -1, ""
+	for i, repo := range repos {
+		inside, err := filepath.Rel(repo.source, target)
+		if err != nil || isOutside(inside) {
+			continue
+		}
+		if best < 0 || len(repo.source) > len(repos[best].source) {
+			best, bestRel = i, inside
+		}
+	}
+	if best < 0 {
+		return target, false
+	}
+	return filepath.Join(repos[best].worktree, bestRel), true
+}
+
+func isOutside(rel string) bool {
+	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// pathSpec returns the relative or absolute directory of a `path:` dependency.
+func pathSpec(spec *yaml.Node) (string, bool) {
+	if spec == nil || spec.Kind != yaml.MappingNode {
+		return "", false
+	}
+	for i := 0; i+1 < len(spec.Content); i += 2 {
+		value := spec.Content[i+1]
+		if spec.Content[i].Value == "path" && value.Kind == yaml.ScalarNode && value.Value != "" {
+			return value.Value, true
+		}
+	}
+	return "", false
+}
+
+func sortedNames(set overrideSet) []string {
+	names := make([]string, 0, len(set))
+	for name := range set {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
