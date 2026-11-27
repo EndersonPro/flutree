@@ -14,12 +14,15 @@ Branch: `feat/mcp-ai-native` (stacked on `feat/create-scope-navigator`) · Deliv
 
 | ID | Specs | Route | Status | Commit |
 | --- | --- | --- | --- | --- |
-| T1 | S2, S3, S6 | delegated writer A (parallel unit; owns internal/infra/mcp, cmd/flutree/mcp.go) | in progress | — |
-| T2 | S5, S6 | delegated writer B (parallel unit; owns internal/infra/mcpinstall, cmd/flutree/mcp_install.go) | in progress | — |
-| T3 | S4, S6 | delegated writer after T1 (same files as T1) | pending | — |
+| T1 | S2, S3, S6 | delegated writer A (parallel unit; owns internal/infra/mcp, cmd/flutree/mcp.go) | done | 28df326 |
+| T2 | S5, S6 | delegated writer B (parallel unit; owns internal/infra/mcpinstall, cmd/flutree/mcp_install.go) | done | 305a0b8 |
+| T3 | S4, S6 | delegated writer after T1 (same files as T1) | in progress | — |
 
 ## Log
 
 - L1 (2026-11-26, user): "Como enviamos todo sin genera una nueva versión aún? Necesito mejorar todo el servidor mcp, pulirlo y darle todas las herramientas que necesitará un agente para entender el funcionamiento, lanzar prompts de pregunta al usuario y todo el flujo, además de mejorar la instalación del mcp en los agentes esto si es la parte más interesante de todo el proyecto, ese soporte nativo a IA"
 - L2: Release answer: release-please.yml runs on push to main but goreleaser only runs `if: release_created == 'true'`, i.e. when the release PR is merged; merging to main does not release. Current MCP: 9 CLI-mirroring tools, no instructions/resources/prompts/elicitation; mcp-go v0.54.1 has WithInstructions, WithResourceCapabilities, WithPromptCapabilities, WithElicitation. Installer: claude-code, opencode, codex.
 - L3 (2026-11-26, user): "Si y delega". Parent split `newMCPInstallCmd` into cmd/flutree/mcp_install.go (mechanical move, e2e green) so the two writers own disjoint files.
+- L4 T1 (writer A): 15 tools (9 original kept + discover_repos, inspect_repo, list_branches, plan_create, create_workspace, workspace_status), 4 resources, instructions; RED 11 new tests → GREEN; `requiresConfirmation` is the single confirmation gate for T3. Limitation: workspace_status has no ahead/behind (registry does not store each worktree's base).
+- L5 T2 (writer B): Cursor, VS Code, Gemini (`gemini`), Claude Desktop, Windsurf mergers + `--scope`, `--dry-run`, `mcp uninstall`, `mcp doctor`. Sources cited per merger; Windsurf path unverified (docs moved), VS Code per-OS profile path assumed.
+- L6 Parent integration: registered uninstall/doctor in cmd/flutree/mcp.go, extended the exact tools/list contract test to 15 names, removed a stray binary `cmd/flutree/flutree` a writer built. `go test ./...` 11 ok, 41 MCP tests, e2e gate ok. Live scratch run: dry-run writes nothing, install keeps other servers, doctor `[OK]` entries + handshake, uninstall removes only flutree. Open: OpenCode docs now say servers go under `mcp.servers.<name>` ("V2 does not place server names directly under mcp"), the installer writes `mcp.<name>`; doctor prints "no flutree entry" WARN for clients that are not installed.
