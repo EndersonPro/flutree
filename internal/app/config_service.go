@@ -3,12 +3,18 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/EndersonPro/flutree/internal/domain"
 )
 
-const scopeRootKey = "scope.root"
+const (
+	scopeRootKey         = "scope.root"
+	workspaceGenerateKey = "workspace.generate"
+)
+
+const supportedKeysHint = "Supported keys: scope.root, workspace.generate."
 
 type ConfigService struct {
 	config ConfigPort
@@ -16,6 +22,66 @@ type ConfigService struct {
 
 func NewConfigService(config ConfigPort) *ConfigService {
 	return &ConfigService{config: config}
+}
+
+// Set stores a configuration value and returns the normalized stored value.
+func (s *ConfigService) Set(key, value string) (string, error) {
+	switch strings.TrimSpace(key) {
+	case scopeRootKey:
+		return s.SetScopeRoot(key, value)
+	case workspaceGenerateKey:
+		enabled, err := strconv.ParseBool(strings.TrimSpace(value))
+		if err != nil {
+			return "", domain.NewError(domain.CategoryInput, 2, "Invalid value for workspace.generate.", "Use true or false.", err)
+		}
+		doc, err := s.config.Load()
+		if err != nil {
+			return "", err
+		}
+		if doc.Version == 0 {
+			doc.Version = 1
+		}
+		doc.Workspace.Generate = &enabled
+		if err := s.config.Save(doc); err != nil {
+			return "", err
+		}
+		return strconv.FormatBool(enabled), nil
+	default:
+		return "", unsupportedKeyError(key)
+	}
+}
+
+// Get returns the effective value of a configuration key.
+func (s *ConfigService) Get(key string) (string, error) {
+	switch strings.TrimSpace(key) {
+	case scopeRootKey:
+		return s.GetScopeRoot(key)
+	case workspaceGenerateKey:
+		enabled, err := s.GenerateWorkspace()
+		if err != nil {
+			return "", err
+		}
+		return strconv.FormatBool(enabled), nil
+	default:
+		return "", unsupportedKeyError(key)
+	}
+}
+
+// GenerateWorkspace reports whether create should write a VSCode workspace
+// when neither --workspace nor --no-workspace is passed. Defaults to true.
+func (s *ConfigService) GenerateWorkspace() (bool, error) {
+	doc, err := s.config.Load()
+	if err != nil {
+		return false, err
+	}
+	if doc.Workspace.Generate == nil {
+		return true, nil
+	}
+	return *doc.Workspace.Generate, nil
+}
+
+func unsupportedKeyError(key string) error {
+	return domain.NewError(domain.CategoryInput, 2, "Unsupported config key '"+strings.TrimSpace(key)+"'.", supportedKeysHint, nil)
 }
 
 func (s *ConfigService) SetScopeRoot(key, value string) (string, error) {
@@ -61,13 +127,7 @@ func validateScopeRootKey(key string) error {
 	if trimmed == scopeRootKey {
 		return nil
 	}
-	return domain.NewError(
-		domain.CategoryInput,
-		2,
-		"Unsupported config key '"+trimmed+"'.",
-		"Only 'scope.root' is currently supported.",
-		nil,
-	)
+	return unsupportedKeyError(trimmed)
 }
 
 func normalizeAndValidateScopePath(raw string, category domain.ErrorCategory, source string) (string, error) {

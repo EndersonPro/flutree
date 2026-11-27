@@ -47,7 +47,7 @@ func newCreateCmd() *cobra.Command {
 	f.StringVar(&opts.baseBranch, "base-branch", "main", "Base branch for worktree creation")
 	f.StringVar(&opts.scope, "scope", ".", "Directory scope for Flutter repo discovery")
 	f.StringVar(&opts.rootRepo, "root-repo", "", "Root repository selector")
-	f.BoolVar(&opts.workspace, "workspace", true, "Generate VSCode workspace file")
+	f.BoolVar(&opts.workspace, "workspace", true, "Generate VSCode workspace file (default from config workspace.generate)")
 	f.BoolVar(&opts.noWorkspace, "no-workspace", false, "Disable VSCode workspace generation")
 	f.BoolVar(&opts.yes, "yes", false, "Auto-acknowledge dry plan in non-interactive mode")
 	f.BoolVar(&opts.nonInteractive, "non-interactive", false, "Disable prompts")
@@ -83,8 +83,15 @@ func runCreate(cmd *cobra.Command, name string, opts *createOptions) error {
 		return err
 	}
 
+	configRepo := infraConfig.NewDefault()
 	genWorkspace := opts.workspace && !opts.noWorkspace
-	scopeResolver := app.NewScopeResolver(infraConfig.NewDefault())
+	// Explicit flags win; otherwise use the persisted workspace.generate.
+	if !cmd.Flags().Changed("workspace") && !cmd.Flags().Changed("no-workspace") {
+		if genWorkspace, err = app.NewConfigService(configRepo).GenerateWorkspace(); err != nil {
+			return err
+		}
+	}
+	scopeResolver := app.NewScopeResolver(configRepo)
 	resolvedScope, err := scopeResolver.Resolve(opts.scope, cmd.Flags().Changed("scope"))
 	if err != nil {
 		return err

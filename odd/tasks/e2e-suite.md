@@ -12,7 +12,7 @@ Branch: `feat/e2e-suite` (stacked on `feat/cobra-migration`) · Delivery: `ask-o
 
 - S7 — "Avoid creating empty override files when no packages are needed." `create` without packages writes no `pubspec_overrides.yaml` (the root pubspec's own overrides already apply) and the dry plan does not list it.
 - S8 — "When packages are needed, respect current overrides and add new ones." Covered by S5 (cbad141, 39e5678).
-- S9 — "Global flag to auto-create yscade workspace." Meaning of "yscade" pending clarification.
+- S9 — "Global flag to auto-create yscade workspace." User clarified: "VSCode, config global" — persisted `flutree config set workspace.generate true|false`; precedence: explicit `--workspace`/`--no-workspace` > config > default true. Assumption: MCP `create_worktree` keeps its explicit `generate_workspace` argument (default false) unchanged; MCP `get_config`/`set_config` accept the new key.
 - S10 — "Auto-inject sdk version for each package and root to avoid run puro/tym in each one. (Maybe set a global choice to select the preferred SDK manager)" Details pending clarification.
 
 ## Tasks
@@ -23,8 +23,8 @@ Branch: `feat/e2e-suite` (stacked on `feat/cobra-migration`) · Delivery: `ask-o
 | T2 | S3 | inline | done | 9fa5443 |
 | T3 | S5, S6 | inline | done | cbad141, 39e5678 |
 | T4 | S4 (B3) | inline | done | 3d5e423 |
-| T5 | S7 | inline | done | (S7 commit) |
-| T6 | S9 | — | blocked (clarify "yscade") | — |
+| T5 | S7 | inline | done | 5ac51e7 |
+| T6 | S9 | inline | done | (S9 commit) |
 | T7 | S10 | — | blocked (clarify SDK injection) | — |
 
 ## Log
@@ -51,3 +51,5 @@ Branch: `feat/e2e-suite` (stacked on `feat/cobra-migration`) · Delivery: `ask-o
 - L15 (2026-11-26, user): "Si necesitas el texto:\n• Avoid creating empty override files when no packages are needed.\n• When packages are needed, respect current overrides and add new ones.\n• Global flag to auto-create yscade workspace.\nAuto-inject sdk version for each package and root to avoid run puro/tym in each one. (Maybe set a global choice to select the preferred SDK manager)"
 - L16 T5: reproduced — `create --no-package` writes `dependency_overrides:\n  {}`; TestCreateNoPackageCreatesRootOnlyArtifacts pins that old behavior and is updated to S7.
 - L17 T5: RED on TestCreateNoPackageCreatesRootOnlyArtifacts (file existed). GREEN — BuildDryPlan leaves OverridePath/OverrideContent empty without packages, Apply skips the write and the exclude, the dry plan hides "Planned Files" when empty. Override e2e tests that relied on --no-package now select a package; removed the conditional guard flagged by review (R3-001). Full suite and e2e gate green.
+- L18 (2026-11-26, user): "yscade" = "VSCode, config global".
+- L19 T6: RED on 4 of 5 create cases, config round trip, non-boolean rejection, MCP set_config. GREEN — `ConfigService.Set/Get` dispatch by key (`scope.root`, `workspace.generate`); `GenerateWorkspace()` defaults to true; create reads it only when neither workspace flag changed; MCP config tools use Set/Get. Unsupported-key hint now lists both keys. Full suite and e2e gate green.

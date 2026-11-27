@@ -107,11 +107,11 @@ type fakeConfigRunner struct {
 	setErr error
 }
 
-func (f *fakeConfigRunner) GetScopeRoot(key string) (string, error) {
+func (f *fakeConfigRunner) Get(key string) (string, error) {
 	return f.getVal, f.getErr
 }
 
-func (f *fakeConfigRunner) SetScopeRoot(key, value string) (string, error) {
+func (f *fakeConfigRunner) Set(key, value string) (string, error) {
 	return f.setVal, f.setErr
 }
 

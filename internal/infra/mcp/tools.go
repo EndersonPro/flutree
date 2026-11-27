@@ -189,7 +189,7 @@ func makeGetConfigHandler(svc MCPServices) toolHandler {
 	return func(_ context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 		return withPanicRecovery(func() (*mcpCallToolResult, error) {
 			key := req.GetString("key", "")
-			value, err := svc.Config.GetScopeRoot(key)
+			value, err := svc.Config.Get(key)
 			if err != nil {
 				return toToolError(err), nil
 			}
@@ -204,7 +204,7 @@ func makeSetConfigHandler(svc MCPServices) toolHandler {
 		return withPanicRecovery(func() (*mcpCallToolResult, error) {
 			key := req.GetString("key", "")
 			value := req.GetString("value", "")
-			newValue, err := svc.Config.SetScopeRoot(key, value)
+			newValue, err := svc.Config.Set(key, value)
 			if err != nil {
 				return toToolError(err), nil
 			}

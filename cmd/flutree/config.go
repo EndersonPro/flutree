@@ -16,9 +16,12 @@ func newConfigCmd() *cobra.Command {
 		Long: `Manage persisted CLI configuration values.
 
 Supported keys:
-  scope.root   Default discovery root for create/add-repo when --scope is omitted`,
+  scope.root           Default discovery root for create/add-repo when --scope is omitted
+  workspace.generate   Whether create writes a VSCode .code-workspace when neither
+                       --workspace nor --no-workspace is passed (true|false, default true)`,
 		Example: `  flutree config set scope.root <path>
-  flutree config get scope.root`,
+  flutree config get scope.root
+  flutree config set workspace.generate false`,
 		Args: noUnknownSubcommand,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
@@ -32,9 +35,9 @@ func newConfigSetCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "set <key> <value>",
 		Short: "Set a configuration value",
-		Args:  exactConfigArgs(2, "Invalid config set arguments.", "Usage: flutree config set scope.root <path>"),
+		Args:  exactConfigArgs(2, "Invalid config set arguments.", "Usage: flutree config set <key> <value>"),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			stored, err := app.NewConfigService(infraConfig.NewDefault()).SetScopeRoot(args[0], args[1])
+			stored, err := app.NewConfigService(infraConfig.NewDefault()).Set(args[0], args[1])
 			if err != nil {
 				return err
 			}
@@ -47,9 +50,9 @@ func newConfigGetCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "get <key>",
 		Short: "Print a configuration value",
-		Args:  exactConfigArgs(1, "Invalid config get arguments.", "Usage: flutree config get scope.root"),
+		Args:  exactConfigArgs(1, "Invalid config get arguments.", "Usage: flutree config get <key>"),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			value, err := app.NewConfigService(infraConfig.NewDefault()).GetScopeRoot(args[0])
+			value, err := app.NewConfigService(infraConfig.NewDefault()).Get(args[0])
 			if err != nil {
 				return err
 			}

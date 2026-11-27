@@ -38,8 +38,8 @@ type cleanRunner interface {
 }
 
 type configRunner interface {
-	GetScopeRoot(key string) (string, error)
-	SetScopeRoot(key, value string) (string, error)
+	Get(key string) (string, error)
+	Set(key, value string) (string, error)
 }
 
 // MCPServices holds all application-layer service interfaces that MCP tool
@@ -190,7 +190,7 @@ func buildCleanWorktreeTool() mcplib.Tool {
 func buildGetConfigTool() mcplib.Tool {
 	return mcplib.NewTool("get_config",
 		mcplib.WithDescription("Get a flutree configuration value."),
-		mcplib.WithString("key", mcplib.Required(), mcplib.Description("Config key (e.g. scope.root).")),
+		mcplib.WithString("key", mcplib.Required(), mcplib.Description("Config key: scope.root or workspace.generate.")),
 	)
 }
 
@@ -198,7 +198,7 @@ func buildGetConfigTool() mcplib.Tool {
 func buildSetConfigTool() mcplib.Tool {
 	return mcplib.NewTool("set_config",
 		mcplib.WithDescription("Set a flutree configuration value."),
-		mcplib.WithString("key", mcplib.Required(), mcplib.Description("Config key (e.g. scope.root).")),
+		mcplib.WithString("key", mcplib.Required(), mcplib.Description("Config key: scope.root or workspace.generate.")),
 		mcplib.WithString("value", mcplib.Required(), mcplib.Description("New value to set.")),
 	)
 }

@@ -52,8 +52,15 @@ type UserScopeConfig struct {
 }
 
 type UserConfigDocument struct {
-	Version int             `json:"version"`
-	Scope   UserScopeConfig `json:"scope"`
+	Version   int                 `json:"version"`
+	Scope     UserScopeConfig     `json:"scope"`
+	Workspace UserWorkspaceConfig `json:"workspace"`
+}
+
+// UserWorkspaceConfig holds persisted defaults for the generated VSCode
+// workspace. A nil Generate means "not configured" (defaults to true).
+type UserWorkspaceConfig struct {
+	Generate *bool `json:"generate,omitempty"`
 }
 
 type GitWorktreeEntry struct {

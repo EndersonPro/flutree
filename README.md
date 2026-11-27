@@ -235,6 +235,7 @@ Usage:
 ```
 flutree config set scope.root <path>
 flutree config get scope.root
+flutree config set workspace.generate false
 ```
 
 Supported keys:
@@ -242,6 +243,7 @@ Supported keys:
 | Key | Description |
 |-----|-------------|
 | `scope.root` | Default discovery root used by `create` and `add-repo` when `--scope` is omitted |
+| `workspace.generate` | `true`/`false` (default `true`): whether `create` writes the VSCode `.code-workspace` when neither `--workspace` nor `--no-workspace` is passed. Explicit flags always win. |
 
 ### list
 
