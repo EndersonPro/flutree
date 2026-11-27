@@ -33,6 +33,79 @@ type DiscoveredFlutterRepo struct {
 	PackageName string
 }
 
+// RepoSummary is one Flutter repository found in a folder, as agents see it.
+type RepoSummary struct {
+	Name          string `json:"name"`
+	PackageName   string `json:"package_name"`
+	RepoRoot      string `json:"repo_root"`
+	CurrentBranch string `json:"current_branch"`
+}
+
+// RepoSDKPins reports the Flutter SDK versions a repository pins per manager.
+type RepoSDKPins struct {
+	FVMVersion string `json:"fvm_version,omitempty"`
+	PuroEnv    string `json:"puro_env,omitempty"`
+}
+
+// RepoInspection describes one repository for planning a workspace.
+type RepoInspection struct {
+	Path          string `json:"path"`
+	IsFlutter     bool   `json:"is_flutter"`
+	Reason        string `json:"reason,omitempty"`
+	Name          string `json:"name,omitempty"`
+	PackageName   string `json:"package_name,omitempty"`
+	RepoRoot      string `json:"repo_root,omitempty"`
+	CurrentBranch string `json:"current_branch,omitempty"`
+	// LocalBranches are the local branch names.
+	LocalBranches []string    `json:"local_branches,omitempty"`
+	SDK           RepoSDKPins `json:"sdk_pin"`
+	// PathDependencies maps a pubspec dependency (dependencies and
+	// dev_dependencies) to the `path:` it declares, exactly as written.
+	PathDependencies map[string]string `json:"path_dependencies"`
+}
+
+// BranchList is the set of start points available in a repository.
+type BranchList struct {
+	RepoPath string   `json:"repo_path"`
+	Current  string   `json:"current"`
+	Local    []string `json:"local"`
+	// Remote are remote-tracking branches such as origin/main (no network).
+	Remote []string `json:"remote"`
+}
+
+// WorktreeStatus is the live state of one worktree of a workspace.
+type WorktreeStatus struct {
+	Name     string `json:"name"`
+	Role     string `json:"role"`
+	Path     string `json:"path"`
+	RepoRoot string `json:"repo_root"`
+	Branch   string `json:"branch"`
+	Exists   bool   `json:"exists"`
+	Dirty    bool   `json:"dirty"`
+}
+
+// OverridesInfo describes the generated pubspec_overrides.yaml of a workspace.
+type OverridesInfo struct {
+	Path   string `json:"path"`
+	Exists bool   `json:"exists"`
+	// Entries maps an overridden package to its spec (a path string, a version
+	// string, or the decoded mapping for git/hosted specs).
+	Entries map[string]any `json:"entries"`
+}
+
+// WorkspaceStatus is the state of a managed workspace: its worktrees, git
+// dirtiness and generated files.
+type WorkspaceStatus struct {
+	Name          string           `json:"name"`
+	Branch        string           `json:"branch"`
+	Status        string           `json:"status"`
+	ContainerPath string           `json:"container_path"`
+	WorkspaceFile string           `json:"workspace_file,omitempty"`
+	Root          WorktreeStatus   `json:"root"`
+	Packages      []WorktreeStatus `json:"packages"`
+	Overrides     OverridesInfo    `json:"pubspec_overrides"`
+}
+
 type RegistryRecord struct {
 	Name      string `json:"name"`
 	Branch    string `json:"branch"`

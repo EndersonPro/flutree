@@ -28,6 +28,11 @@ type GitPort interface {
 	BaseBranchExists(repoRoot, branch string) (bool, error)
 	// DeleteBranch force-deletes a local branch (never a checked-out one).
 	DeleteBranch(repoRoot, branch string) error
+	// CurrentBranch returns the checked-out branch ("" when HEAD is detached).
+	CurrentBranch(repoRoot string) (string, error)
+	// ListBranches returns local branches and origin/* remote-tracking branches
+	// without touching the network.
+	ListBranches(repoRoot string) (local, remote []string, err error)
 }
 
 // SDKPort reads Flutter SDK pins and runs the SDK manager in a worktree.

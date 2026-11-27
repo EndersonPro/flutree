@@ -37,6 +37,14 @@ type cleanRunner interface {
 	Run(input domain.CleanInput) (domain.CleanResult, error)
 }
 
+// inspectRunner serves the read-only discovery and status tools and resources.
+type inspectRunner interface {
+	DiscoverRepos(scope string) ([]domain.RepoSummary, error)
+	InspectRepo(path string) (domain.RepoInspection, error)
+	ListBranches(repoPath string) (domain.BranchList, error)
+	WorkspaceStatus(name string) (domain.WorkspaceStatus, error)
+}
+
 type configRunner interface {
 	Get(key string) (string, error)
 	Set(key, value string) (string, error)
@@ -58,11 +66,12 @@ type MCPServices struct {
 	PubGet   pubGetRunner
 	Clean    cleanRunner
 	Config   configRunner
+	Inspect  inspectRunner
 }
 
 // BuildServer constructs and returns a fully registered MCP server, or an
 // error if any required service field in services is nil.
-// All 9 tools are registered here; actual handler implementations live in tools.go.
+// All tools, resources and the server instructions are registered here; actual handler implementations live in tools.go.
 func BuildServer(version string, services MCPServices) (*mcpserver.MCPServer, error) {
 	var nilFields []string
 	if services.List == nil {
@@ -86,11 +95,17 @@ func BuildServer(version string, services MCPServices) (*mcpserver.MCPServer, er
 	if services.Config == nil {
 		nilFields = append(nilFields, "Config")
 	}
+	if services.Inspect == nil {
+		nilFields = append(nilFields, "Inspect")
+	}
 	if len(nilFields) > 0 {
 		return nil, fmt.Errorf("BuildServer: nil service fields: %v", nilFields)
 	}
 
-	s := mcpserver.NewMCPServer("flutree", version)
+	s := mcpserver.NewMCPServer("flutree", version,
+		mcpserver.WithInstructions(serverInstructions),
+		mcpserver.WithResourceCapabilities(false, false),
+	)
 
 	s.AddTool(buildListWorktreesTool(), makeListWorktreesHandler(services))
 	s.AddTool(buildCreateWorktreeTool(), makeCreateWorktreeHandler(services))
@@ -101,6 +116,15 @@ func BuildServer(version string, services MCPServices) (*mcpserver.MCPServer, er
 	s.AddTool(buildGetConfigTool(), makeGetConfigHandler(services))
 	s.AddTool(buildSetConfigTool(), makeSetConfigHandler(services))
 	s.AddTool(buildGetVersionTool(), makeGetVersionHandler(version, services))
+
+	s.AddTool(buildDiscoverReposTool(), makeDiscoverReposHandler(services))
+	s.AddTool(buildInspectRepoTool(), makeInspectRepoHandler(services))
+	s.AddTool(buildListBranchesTool(), makeListBranchesHandler(services))
+	s.AddTool(buildPlanCreateTool(), makePlanCreateHandler(services))
+	s.AddTool(buildCreateWorkspaceTool(), makeCreateWorkspaceHandler(services))
+	s.AddTool(buildWorkspaceStatusTool(), makeWorkspaceStatusHandler(services))
+
+	registerResources(s, services)
 
 	return s, nil
 }
@@ -116,9 +140,10 @@ type toolHandler = func(ctx context.Context, req mcplib.CallToolRequest) (*mcpli
 // buildListWorktreesTool defines the tool schema for list_worktrees.
 func buildListWorktreesTool() mcplib.Tool {
 	return mcplib.NewTool("list_worktrees",
-		mcplib.WithDescription("List registered flutree worktrees."),
-		mcplib.WithBoolean("show_all", mcplib.Description("Include unmanaged worktrees.")),
-		mcplib.WithBoolean("global_scope", mcplib.Description("List across all repos, not just the current one.")),
+		mcplib.WithDescription("List the workspaces flutree manages (name, branch, root path, status active|missing|completed, package_count). Use it first to see what already exists, and to check that a name is free before planning a new workspace. Read-only. Same data as the flutree://workspaces resource."),
+		mcplib.WithReadOnlyHintAnnotation(true), mcplib.WithDestructiveHintAnnotation(false),
+		mcplib.WithBoolean("show_all", mcplib.Description("Also list git worktrees that flutree does not manage (default false).")),
+		mcplib.WithBoolean("global_scope", mcplib.Description("List workspaces of every repository, not only the repository of the server's working directory. Agents usually want true (default false).")),
 	)
 }
 
@@ -128,8 +153,8 @@ func buildListWorktreesTool() mcplib.Tool {
 // worktree starts from the latest remote state.
 func buildCreateWorktreeTool() mcplib.Tool {
 	return mcplib.NewTool("create_worktree",
-		mcplib.WithDescription("Create a new flutree worktree. base_branch is required — ask the user which branch to base the worktree on. Use sync_with_remote=true to fetch the latest changes from origin before creating."),
-		mcplib.WithString("name", mcplib.Required(), mcplib.Description("Worktree name.")),
+		mcplib.WithDescription("Legacy one-shot creation of a workspace: plans and creates immediately, with no confirmation step. Prefer plan_create followed by create_workspace (confirm=true), which lets the user review the plan first. Kept for backward compatibility. base_branch is required: ask the user which branch to use instead of guessing; use sync_with_remote=true to fetch origin/<base_branch> first."),
+		mcplib.WithString("name", mcplib.Required(), mcplib.Description("Name of the new workspace; lowercased and slugified for folders, and the default branch is feature/<name>.")),
 		mcplib.WithString("root_repo", mcplib.Required(), mcplib.Description("Absolute path to the root repository.")),
 		mcplib.WithString("scope", mcplib.Required(), mcplib.Description("Execution scope path.")),
 		mcplib.WithString("branch", mcplib.Description("Branch name to create.")),
@@ -148,7 +173,7 @@ func buildCreateWorktreeTool() mcplib.Tool {
 // buildAddRepoTool defines the tool schema for add_repo.
 func buildAddRepoTool() mcplib.Tool {
 	return mcplib.NewTool("add_repo",
-		mcplib.WithDescription("Add repositories to an existing flutree workspace."),
+		mcplib.WithDescription("Attach more Flutter repositories as package worktrees to an existing workspace and regenerate its pubspec_overrides.yaml. Use it when the user wants another package in a workspace that already exists (use create_workspace for a new one). Ask the user for the base branch of each added repo (package_base). Changes the filesystem and git branches."),
 		mcplib.WithString("workspace_name", mcplib.Required(), mcplib.Description("Target workspace name.")),
 		mcplib.WithArray("repos", mcplib.Required(), mcplib.Description("Repository selectors to add.")),
 		mcplib.WithString("scope", mcplib.Description("Execution scope path.")),
@@ -163,8 +188,8 @@ func buildAddRepoTool() mcplib.Tool {
 // buildCompleteWorktreeTool defines the tool schema for complete_worktree.
 func buildCompleteWorktreeTool() mcplib.Tool {
 	return mcplib.NewTool("complete_worktree",
-		mcplib.WithDescription("Mark a flutree worktree as completed and remove it."),
-		mcplib.WithString("name", mcplib.Required(), mcplib.Description("Worktree name.")),
+		mcplib.WithDescription("DESTRUCTIVE: finish a workspace by removing its root and package worktrees from disk and marking it completed in the registry. Local branches are kept. Use it only when the user says the work is done. It refuses worktrees with uncommitted changes unless force=true: call workspace_status first, show the user what is dirty and ask before forcing."),
+		mcplib.WithString("name", mcplib.Required(), mcplib.Description("Workspace name, as shown by list_worktrees.")),
 		mcplib.WithBoolean("force", mcplib.Description("Force removal even if the worktree is dirty.")),
 	)
 }
@@ -172,8 +197,8 @@ func buildCompleteWorktreeTool() mcplib.Tool {
 // buildPubGetTool defines the tool schema for pubget.
 func buildPubGetTool() mcplib.Tool {
 	return mcplib.NewTool("pubget",
-		mcplib.WithDescription("Run pub get on a flutree worktree."),
-		mcplib.WithString("name", mcplib.Required(), mcplib.Description("Worktree name.")),
+		mcplib.WithDescription("Run pub get (flutter or dart, auto-detected) in every package worktree of the workspace in parallel, then in the root. Use it after create_workspace or add_repo so dependencies resolve through pubspec_overrides.yaml. Takes the workspace name."),
+		mcplib.WithString("name", mcplib.Required(), mcplib.Description("Workspace name, as shown by list_worktrees.")),
 		mcplib.WithBoolean("force", mcplib.Description("Force pub get even if up to date.")),
 	)
 }
@@ -181,7 +206,7 @@ func buildPubGetTool() mcplib.Tool {
 // buildCleanWorktreeTool defines the tool schema for clean_worktree.
 func buildCleanWorktreeTool() mcplib.Tool {
 	return mcplib.NewTool("clean_worktree",
-		mcplib.WithDescription("Clean stale flutree worktrees."),
+		mcplib.WithDescription("Run flutter/dart clean in the managed worktree that contains the server's working directory (the process must run inside a managed worktree). It does not take a workspace name; rarely useful for agents. force=true also removes pubspec.lock."),
 		mcplib.WithBoolean("force", mcplib.Description("Force clean without confirmation.")),
 	)
 }
@@ -189,16 +214,17 @@ func buildCleanWorktreeTool() mcplib.Tool {
 // buildGetConfigTool defines the tool schema for get_config.
 func buildGetConfigTool() mcplib.Tool {
 	return mcplib.NewTool("get_config",
-		mcplib.WithDescription("Get a flutree configuration value."),
-		mcplib.WithString("key", mcplib.Required(), mcplib.Description("Config key: scope.root or workspace.generate.")),
+		mcplib.WithDescription("Read one flutree configuration value: scope.root (default folder to discover repositories), workspace.generate (true/false) or sdk.manager (auto|fvm|puro|none). All three at once: flutree://config."),
+		mcplib.WithReadOnlyHintAnnotation(true), mcplib.WithDestructiveHintAnnotation(false),
+		mcplib.WithString("key", mcplib.Required(), mcplib.Description("Config key: scope.root, workspace.generate or sdk.manager.")),
 	)
 }
 
 // buildSetConfigTool defines the tool schema for set_config.
 func buildSetConfigTool() mcplib.Tool {
 	return mcplib.NewTool("set_config",
-		mcplib.WithDescription("Set a flutree configuration value."),
-		mcplib.WithString("key", mcplib.Required(), mcplib.Description("Config key: scope.root or workspace.generate.")),
+		mcplib.WithDescription("Persist one flutree configuration value. Only change configuration when the user asks for it. scope.root must be an existing directory; workspace.generate takes true|false; sdk.manager takes auto|fvm|puro|none."),
+		mcplib.WithString("key", mcplib.Required(), mcplib.Description("Config key: scope.root, workspace.generate or sdk.manager.")),
 		mcplib.WithString("value", mcplib.Required(), mcplib.Description("New value to set.")),
 	)
 }
@@ -206,6 +232,7 @@ func buildSetConfigTool() mcplib.Tool {
 // buildGetVersionTool defines the tool schema for get_version.
 func buildGetVersionTool() mcplib.Tool {
 	return mcplib.NewTool("get_version",
-		mcplib.WithDescription("Return the flutree binary version without calling any service."),
+		mcplib.WithDescription("Return the version of the flutree binary this server runs. Takes no arguments."),
+		mcplib.WithReadOnlyHintAnnotation(true), mcplib.WithDestructiveHintAnnotation(false),
 	)
 }

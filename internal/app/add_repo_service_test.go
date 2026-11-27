@@ -965,3 +965,8 @@ func TestAddRepoNonInteractiveAcceptsWizardShapedPayloadWithRepoRootKeys(t *test
 		t.Fatalf("expected no prompts in deterministic non-interactive execution, ask=%v confirm=%v", prompt.askTextCalls, prompt.confirmCalls)
 	}
 }
+
+func (f *fakeAddRepoGit) CurrentBranch(string) (string, error) { return "main", nil }
+func (f *fakeAddRepoGit) ListBranches(string) ([]string, []string, error) {
+	return []string{"main"}, []string{"origin/main"}, nil
+}

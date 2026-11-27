@@ -23,7 +23,7 @@ func newMCPCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newMCPServeCmd(), newMCPInstallCmd())
+	cmd.AddCommand(newMCPServeCmd(), newMCPInstallCmd(), newMCPUninstallCmd(), newMCPDoctorCmd())
 	return cmd
 }
 
@@ -55,6 +55,7 @@ func newMCPServeCmd() *cobra.Command {
 				PubGet:   app.NewPubGetService(registry.NewDefault(), &infraPub.Gateway{}),
 				Clean:    app.NewCleanService(&infraGit.Gateway{}, registry.NewDefault(), &infraPub.Gateway{}),
 				Config:   configService,
+				Inspect:  app.NewInspectService(&infraGit.Gateway{}, &infraSDK.Gateway{}, registry.NewDefault()),
 			}
 			srv, err := infraMCP.BuildServer(displayVersion(), services)
 			if err != nil {

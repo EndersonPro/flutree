@@ -1785,7 +1785,7 @@ func TestMCPServeRespondsToInitialize(t *testing.T) {
 
 // TestMCPServeToolsListContainsAll9Tools verifies that a tools/list request
 // returns exactly the 9 advertised tool names.
-func TestMCPServeToolsListContainsAll9Tools(t *testing.T) {
+func TestMCPServeToolsListContainsAllTools(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping MCP serve integration test in short mode")
 	}
@@ -1837,6 +1837,8 @@ func TestMCPServeToolsListContainsAll9Tools(t *testing.T) {
 		"list_worktrees", "create_worktree", "add_repo",
 		"complete_worktree", "pubget", "clean_worktree",
 		"get_config", "set_config", "get_version",
+		"discover_repos", "inspect_repo", "list_branches",
+		"plan_create", "create_workspace", "workspace_status",
 	}
 	if len(tools) != len(wantTools) {
 		t.Fatalf("expected %d tools, got %d: %v", len(wantTools), len(tools), tools)

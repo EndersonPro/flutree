@@ -1064,3 +1064,8 @@ func TestApplyFailureDeletesOnlyBranchesCreatedInThisRun(t *testing.T) {
 		t.Fatalf("only the branch created in this run may be deleted, got %v", g.deleted)
 	}
 }
+
+func (f *fakeCreateGit) CurrentBranch(string) (string, error) { return "main", nil }
+func (f *fakeCreateGit) ListBranches(string) ([]string, []string, error) {
+	return []string{"main"}, []string{"origin/main"}, nil
+}

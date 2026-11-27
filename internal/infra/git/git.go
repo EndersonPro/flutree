@@ -319,6 +319,47 @@ func (g *Gateway) DeleteBranch(repoRoot, branch string) error {
 	return err
 }
 
+// CurrentBranch returns the checked-out branch, or "" when HEAD is detached.
+func (g *Gateway) CurrentBranch(repoRoot string) (string, error) {
+	out, err := g.run(repoRoot, "symbolic-ref", "--short", "-q", "HEAD")
+	if err != nil {
+		// symbolic-ref exits 1 on a detached HEAD; any other failure surfaces
+		// when the caller touches the repo again, so treat it as detached.
+		var appErr *domain.AppError
+		if errors.As(err, &appErr) && appErr.Category == domain.CategoryPrecondition {
+			return "", err
+		}
+		return "", nil
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// ListBranches lists local branches and remote-tracking branches (without the
+// symbolic origin/HEAD). It reads local refs only: no fetch, no network.
+func (g *Gateway) ListBranches(repoRoot string) ([]string, []string, error) {
+	out, err := g.run(repoRoot, "for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes")
+	if err != nil {
+		return nil, nil, err
+	}
+	local, remote := []string{}, []string{}
+	for _, ref := range strings.Split(strings.TrimSpace(out), "\n") {
+		ref = strings.TrimSpace(ref)
+		switch {
+		case strings.HasPrefix(ref, "refs/heads/"):
+			local = append(local, strings.TrimPrefix(ref, "refs/heads/"))
+		case strings.HasPrefix(ref, "refs/remotes/"):
+			name := strings.TrimPrefix(ref, "refs/remotes/")
+			if strings.HasSuffix(name, "/HEAD") {
+				continue
+			}
+			remote = append(remote, name)
+		}
+	}
+	sort.Strings(local)
+	sort.Strings(remote)
+	return local, remote, nil
+}
+
 func (g *Gateway) run(cwd string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	if cwd != "" {

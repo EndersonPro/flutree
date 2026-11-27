@@ -31,11 +31,14 @@ type fakeCreateRunner struct {
 	nonInteractiveCaptured    bool
 	capturedPackageBaseBranch map[string]string
 	capturedSyncWithRemote    bool
+	capturedScope             string
+	applied                   bool
 }
 
 func (f *fakeCreateRunner) BuildDryPlan(input domain.CreateInput) (domain.CreateDryPlan, error) {
 	f.nonInteractiveCaptured = input.NonInteractive
 	f.capturedPackageBaseBranch = input.PackageBaseBranch
+	f.capturedScope = input.ExecutionScope
 	if f.planErr != nil {
 		return domain.CreateDryPlan{}, f.planErr
 	}
@@ -44,6 +47,7 @@ func (f *fakeCreateRunner) BuildDryPlan(input domain.CreateInput) (domain.Create
 
 func (f *fakeCreateRunner) Apply(plan domain.CreateDryPlan, opts domain.CreateApplyOptions) (domain.CreateResult, error) {
 	f.capturedSyncWithRemote = opts.SyncWithRemote
+	f.applied = true
 	if f.applyErr != nil {
 		return domain.CreateResult{}, f.applyErr
 	}

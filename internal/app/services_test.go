@@ -459,3 +459,8 @@ func TestListGlobalAllIncludesUnmanagedAcrossRegisteredRepos(t *testing.T) {
 		t.Fatalf("expected unmanaged rows from both repos, got %d (%+v)", unmanaged, rows)
 	}
 }
+
+func (f *fakeGit) CurrentBranch(string) (string, error) { return "main", nil }
+func (f *fakeGit) ListBranches(string) ([]string, []string, error) {
+	return []string{"main"}, []string{"origin/main"}, nil
+}
