@@ -194,6 +194,7 @@ func buildCompleteWorktreeTool() mcplib.Tool {
 		mcplib.WithDescription("DESTRUCTIVE, needs the user's approval: finish a workspace by removing its root and package worktrees from disk and marking it completed in the registry. Local branches are kept. Use it only when the user says the work is done. It refuses worktrees with uncommitted changes unless force=true: call workspace_status first, show the user what is dirty and ask before forcing."),
 		mcplib.WithString("name", mcplib.Required(), mcplib.Description("Workspace name, as shown by list_worktrees.")),
 		mcplib.WithBoolean("force", mcplib.Description("Force removal even if the worktree is dirty.")),
+		mcplib.WithBoolean("confirm", mcplib.Description("Set true only after the user explicitly approved this removal. Required when the client cannot ask the user itself; a client that can ask still asks.")),
 	)
 }
 
@@ -203,6 +204,7 @@ func buildPubGetTool() mcplib.Tool {
 		mcplib.WithDescription("Run pub get (flutter or dart, auto-detected) in every package worktree of the workspace in parallel, then in the root. Use it after create_workspace or add_repo so dependencies resolve through pubspec_overrides.yaml. Takes the workspace name."),
 		mcplib.WithString("name", mcplib.Required(), mcplib.Description("Workspace name, as shown by list_worktrees.")),
 		mcplib.WithBoolean("force", mcplib.Description("Force pub get even if up to date.")),
+		mcplib.WithBoolean("confirm", mcplib.Description("Set true only after the user approved a forced pub get. Required with force=true when the client cannot ask the user itself.")),
 	)
 }
 

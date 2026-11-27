@@ -57,6 +57,7 @@ func (s *CreateService) BuildDryPlan(input domain.CreateInput) (domain.CreateDry
 		return domain.CreateDryPlan{}, discoverErr
 	}
 	rootSelector, packageSelectors := selectors[0], selectors[1:]
+	packageBase := normalizeAssignmentKeys(s.git, repos, input.PackageBaseBranch)
 
 	rootRepo, err := s.resolveRootRepo(repos, rootSelector, input.NonInteractive)
 	if err != nil {
@@ -92,9 +93,9 @@ func (s *CreateService) BuildDryPlan(input domain.CreateInput) (domain.CreateDry
 	packagePlans := make([]domain.PlannedWorktree, 0, len(packages))
 	for _, pkg := range packages {
 		branch := rootBranch
-		pkgBase, ok := input.PackageBaseBranch[pkg.Name]
+		pkgBase, ok := packageBase[pkg.Name]
 		if !ok {
-			pkgBase, ok = input.PackageBaseBranch[pkg.RepoRoot]
+			pkgBase, ok = packageBase[pkg.RepoRoot]
 		}
 		if !ok {
 			pkgBase, err = s.prompt.AskText(
@@ -581,4 +582,27 @@ func withPathRepos(git GitPort, repos []domain.DiscoveredFlutterRepo, selectors 
 		}
 	}
 	return repos, out, added
+}
+
+// normalizeAssignmentKeys rewrites the path-selector keys of a per-package map
+// (--package-base, --package-branch-source) to the repo's absolute root, the
+// same identity withPathRepos gives to package selectors, so "../pkg-a=main"
+// and "~/code/pkg-a=main" match the repo they name. Name keys stay as they are.
+func normalizeAssignmentKeys(git GitPort, repos []domain.DiscoveredFlutterRepo, values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return values
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		if looksLikePath(key) {
+			resolved := resolvePathSelector(key)
+			if repo, ok := findRepoBySelector(repos, resolved); ok {
+				key = repo.RepoRoot
+			} else if repo, ok, err := git.InspectFlutterRepo(resolved); err == nil && ok {
+				key = repo.RepoRoot
+			}
+		}
+		out[key] = value
+	}
+	return out
 }

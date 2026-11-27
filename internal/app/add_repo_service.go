@@ -166,6 +166,9 @@ func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, e
 		return domain.AddRepoResult{}, err
 	}
 
+	input.PackageBaseBranch = normalizeAssignmentKeys(s.git, selectedRepos, input.PackageBaseBranch)
+	input.PackageBranchSource = normalizeAssignmentKeys(s.git, selectedRepos, input.PackageBranchSource)
+
 	createSvc := NewCreateService(s.git, s.registry, s.prompt)
 	newPlans := []domain.PlannedWorktree{}
 	hasExplicitPackageBase := len(input.PackageBaseBranch) > 0

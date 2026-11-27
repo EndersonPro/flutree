@@ -53,6 +53,7 @@ func writeOverrideFile(overridePath, worktreePath, sourceRepoRoot string, packag
 	if err != nil {
 		return err
 	}
+	dropStaleGenerated(existing, derived, worktreePath, packages)
 	merged := mergeOverrides(derived, pubspecOverrides, existing, packageOverrides(worktreePath, packages))
 	content, err := formatOverrides(merged)
 	if err != nil {
@@ -62,6 +63,39 @@ func writeOverrideFile(overridePath, worktreePath, sourceRepoRoot string, packag
 		return nil
 	}
 	return os.WriteFile(overridePath, []byte(content), 0o644)
+}
+
+// dropStaleGenerated removes from existing the entries a previous run generated
+// and the current graph now maps elsewhere, so attaching a repository refreshes
+// them. The file carries no marker, so an entry counts as generated only when
+// the new derivation has a different value for the same package and the
+// existing path still points into the source checkout of a selected repository:
+// that is the location flutree itself produced before the repository had a
+// worktree. Anything else (a user's own path, version, git or hosted spec)
+// stays and keeps precedence over the derived values.
+func dropStaleGenerated(existing, derived overrideSet, worktreePath string, packages []domain.PlannedWorktree) {
+	for name, spec := range existing {
+		fresh, ok := derived[name]
+		if !ok {
+			continue
+		}
+		have, hasPath := pathSpec(spec)
+		want, _ := pathSpec(fresh)
+		if !hasPath || have == want {
+			continue
+		}
+		target := have
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(worktreePath, filepath.FromSlash(have))
+		}
+		target = filepath.Clean(target)
+		for _, pkg := range packages {
+			if rel, err := filepath.Rel(pkg.Repo.RepoRoot, target); err == nil && !isOutside(rel) {
+				delete(existing, name)
+				break
+			}
+		}
+	}
 }
 
 // buildOverrideContent renders the override file shown in the dry plan, before

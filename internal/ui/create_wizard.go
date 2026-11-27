@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -229,8 +230,53 @@ func sortedRepos(repos []domain.DiscoveredFlutterRepo) []domain.DiscoveredFlutte
 	return ordered
 }
 
+// withSelectorRepos adds to repos every path selector (--root-repo, --package)
+// that names a Flutter repo not already known, such as one outside the scope,
+// using the same inspection the folder navigator uses.
+func withSelectorRepos(inspect func(string) (domain.DiscoveredFlutterRepo, bool), repos []domain.DiscoveredFlutterRepo, selectors []string) []domain.DiscoveredFlutterRepo {
+	if inspect == nil {
+		return repos
+	}
+	out := append([]domain.DiscoveredFlutterRepo(nil), repos...)
+	for _, selector := range selectors {
+		if !selectorIsPath(selector) {
+			continue
+		}
+		known := false
+		for _, repo := range out {
+			if matchesSelector(repo, selector) {
+				known = true
+				break
+			}
+		}
+		if known {
+			continue
+		}
+		if repo, ok := inspect(expandSelectorPath(selector)); ok {
+			out = append(out, repo)
+		}
+	}
+	return out
+}
+
+func selectorIsPath(selector string) bool {
+	sel := strings.TrimSpace(selector)
+	return strings.HasPrefix(sel, "~") || strings.HasPrefix(sel, ".") || strings.ContainsRune(sel, filepath.Separator)
+}
+
+// expandSelectorPath expands a leading "~" and makes the path absolute.
+func expandSelectorPath(selector string) string {
+	sel := strings.TrimSpace(selector)
+	if sel == "~" || strings.HasPrefix(sel, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			sel = filepath.Join(home, strings.TrimPrefix(sel, "~"))
+		}
+	}
+	return domain.NormalizePath(sel)
+}
+
 func newCreateWizardModel(input CreateWizardInput, repos []domain.DiscoveredFlutterRepo) createWizardModel {
-	orderedRepos := sortedRepos(repos)
+	orderedRepos := sortedRepos(withSelectorRepos(input.Inspect, repos, append([]string{input.RootSelector}, input.PackageSelectors...)))
 
 	rootIndex := 0
 	for i, repo := range orderedRepos {
@@ -900,7 +946,13 @@ func matchesSelector(repo domain.DiscoveredFlutterRepo, selector string) bool {
 	if sel == "" {
 		return false
 	}
-	return repo.Name == sel || repo.PackageName == sel || domain.NormalizePath(repo.RepoRoot) == domain.NormalizePath(sel)
+	if repo.Name == sel || repo.PackageName == sel {
+		return true
+	}
+	if selectorIsPath(sel) {
+		sel = expandSelectorPath(sel)
+	}
+	return domain.NormalizePath(repo.RepoRoot) == domain.NormalizePath(sel)
 }
 
 func trimLastRune(value string) string {
@@ -1164,6 +1216,14 @@ func (m createWizardModel) handleScan(msg scanResultMsg) (tea.Model, tea.Cmd) {
 	}
 	m.scanning = false
 	found := msg.err == nil && len(msg.repos) > 0
+	if msg.kind == scanInitial {
+		// Explicit path selectors outside the scope join the candidates, and
+		// alone are enough to skip the scope navigator.
+		withPaths := withSelectorRepos(m.inspect, msg.repos, append([]string{m.initRoot}, m.initPkgs...))
+		if len(withPaths) > len(msg.repos) {
+			msg.repos, found = withPaths, true
+		}
+	}
 
 	switch msg.kind {
 	case scanInitial:
