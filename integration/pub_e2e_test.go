@@ -177,11 +177,12 @@ func TestE2ECleanOutsideManagedWorktreeIsPreconditionError(t *testing.T) {
 }
 
 func TestE2ECleanOutsideGitRepositoryFails(t *testing.T) {
-	res := runE2E(t, t.TempDir(), testEnv(t.TempDir()), "clean")
+	// flutree recognizes git's English "not a git repository" message, so force
+	// git's C locale to keep the test independent of the machine's language.
+	env := append(testEnv(t.TempDir()), "LC_ALL=C", "LANG=C", "LANGUAGE=")
+	res := runE2E(t, t.TempDir(), env, "clean")
 	res.requireCode(t, 1)
-	// Pins current behavior: the raw git failure is surfaced (bug candidate,
-	// see odd/tasks/e2e-suite.md).
-	if !strings.Contains(res.stderr, "[git] Git command failed: git rev-parse --show-toplevel") {
+	if !strings.Contains(res.stderr, "[precondition] Current directory is not inside a Git repository.") {
 		t.Fatalf("unexpected stderr: %s", res.stderr)
 	}
 }
