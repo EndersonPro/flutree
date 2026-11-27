@@ -10,8 +10,43 @@ It has native AI agent support: `flutree mcp install` plugs it into Claude Code,
 [![Go Version](https://img.shields.io/github/go-mod/go-version/EndersonPro/flutree?style=flat-square)](go.mod)
 [![Last Commit](https://img.shields.io/github/last-commit/EndersonPro/flutree?style=flat-square)](https://github.com/EndersonPro/flutree/commits/main)
 
+## Let your AI agent set it up
+
+Copy this prompt into your AI coding agent (Claude Code, Cursor, VS Code Copilot, Codex, OpenCode, Gemini CLI, Claude Desktop or Windsurf). It installs flutree, connects it to the agent and explains how it works.
+
+```text
+Install and set up flutree (https://github.com/EndersonPro/flutree) for me:
+
+1. Check if `flutree --version` already works. If not, install it at a stable
+   location on my PATH:
+   - macOS: `brew tap EndersonPro/flutree && brew install EndersonPro/flutree/flutree`
+   - Windows: `scoop bucket add flutree https://github.com/EndersonPro/scoop-flutree && scoop install flutree`
+   - Linux (or if the above are not available): download the archive for my
+     OS/architecture from the latest release
+     (https://github.com/EndersonPro/flutree/releases/latest), verify it against
+     checksums.txt, and put the `flutree` binary on my PATH. The binary is at the
+     root of the archive. Ask me before using sudo.
+2. Register flutree in yourself with `flutree mcp install --client <you>`, where
+   <you> is one of: claude-code, cursor, vscode, codex, opencode, gemini,
+   claude-desktop, windsurf. Use `--dry-run` first and show me what it will
+   write. Do not touch other MCP servers, and ask me before using `--force`.
+3. Run `flutree mcp doctor` and fix any [ERR] line.
+4. Tell me how to restart or reload you so the flutree MCP server is loaded.
+5. Explain in 5 short bullets how flutree works and what I can ask you to do
+   with it (read `flutree --help`, or the `flutree://guide` MCP resource once
+   it is loaded).
+```
+
+### How it works, in short
+
+- **Workspace**: `flutree create <name>` creates Git worktrees for a root app and the packages you pick, under `~/Documents/worktrees/<name>/` (`root/` and `packages/`), on a `feature/<name>` branch. Your original checkouts are not touched.
+- **Overrides**: it writes `pubspec_overrides.yaml` so the root and every package resolve each other from the worktrees, keeping the overrides you already had.
+- **Lifecycle**: `add-repo` attaches more packages, `pubget` runs pub get everywhere, `complete` removes the worktrees and keeps the branches.
+- **With an agent**: through MCP the agent can discover your repos, show you a plan, ask you for missing decisions (base branch, packages) and only create or delete after you confirm.
+
 ## Table of Contents
 
+- [Let your AI agent set it up](#let-your-ai-agent-set-it-up)
 - [Features](#features)
 - [Installation](#installation)
 - [Set up flutree for your AI agent (MCP)](#set-up-flutree-for-your-ai-agent-mcp)
@@ -80,10 +115,11 @@ Each [release](https://github.com/EndersonPro/flutree/releases/latest) ships the
 | Windows amd64 | `flutree-<version>-windows-amd64.zip` |
 | Windows arm64 | `flutree-<version>-windows-arm64.zip` |
 
-Linux example (replace the version and architecture):
+Linux example (replace `amd64` with `arm64` if needed):
 
 ```bash
-VERSION=2.0.0
+# latest release version, without the leading "v"
+VERSION=$(curl -s https://api.github.com/repos/EndersonPro/flutree/releases/latest | grep -o '"tag_name": *"v[^"]*"' | cut -d'"' -f4 | tr -d v)
 ARCHIVE=flutree-${VERSION}-linux-amd64.tar.gz
 curl -LO https://github.com/EndersonPro/flutree/releases/download/v${VERSION}/${ARCHIVE}
 curl -LO https://github.com/EndersonPro/flutree/releases/download/v${VERSION}/checksums.txt
