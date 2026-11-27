@@ -13,7 +13,7 @@ Thank you for your interest in contributing to `flutree`! All contributions are 
 ## Development Setup
 
 ### Prerequisites
-- Go `>=1.22`
+- Go `>=1.25` (see `go.mod`)
 - Git available in `PATH`
 - Access to a Flutter project for testing (optional)
 
