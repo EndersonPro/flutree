@@ -22,7 +22,8 @@ Branch: `feat/mcp-ai-native` (stacked on `feat/create-scope-navigator`) · Deliv
 | T3 | S4, S6 | delegated writer after T1 (same files as T1) | done | b7ea3c8 |
 | T4 | S7 a–d | delegated writer A (parallel; owns internal/infra/mcpinstall, cmd/flutree/mcp_*.go) | done | 65e0484 |
 | T5 | S7 e | delegated writer B (parallel; owns registry/app/mcp tools) | done | 93c0e78 |
-| T6 | S8 | parent (git, push, release) | pending | — |
+| T6 | S8 | parent (git, push, release) | in progress | PR #56 |
+| T7 | S8 (Codex review fixes) | delegated writer | in progress | — |
 
 ## Log
 
@@ -36,3 +37,4 @@ Branch: `feat/mcp-ai-native` (stacked on `feat/create-scope-navigator`) · Deliv
 - L8 Native review split in three (5245 lines in one slice): 4e50edb..305a0b8 installer, 305a0b8..28df326 server, 28df326..HEAD elicitation — all granted, approved, acknowledged. Parent fixes from the advisory notes: install --dry-run could reach Merge (write) for a non-previewable merger; doctor exited 0 on an unreadable detected config (b04491d, RED→GREEN); an elicitation "accept" without `confirm` proceeded — now fails closed (RED→GREEN, new subtest). Checked and left as is: unsupported scope does not fail doctor (Detected=false). Open: OpenCode V2 `mcp.servers.<name>` layout; Windsurf/VS Code paths not confirmed by official docs; doctor WARN noise for clients without entries; workspace_status has no ahead/behind; VS Code JSONC configs are not parsed.
 - L9 (2026-11-27, user): "Primero ajustemos los pendientes y después push a main y sacamos release de todos los cambios que tenemos hasta ahora"
 - L10 T4/T5 done; parent seam check: `go test ./...` 11 ok, `GOOS=windows go build` ok, e2e gate ok, `check_version_contract.sh` ok. OpenCode evidence (parent, scratch HOME): `opencode debug config` on v2.3.2 loads a legacy `mcp.probe` entry as `mcp.servers.probe`, so the V2 default for new files matches current OpenCode. Still unverified: Windsurf path (docs redirect to Devin), VS Code per-OS user mcp.json directory. Registry change is additive (base_branch omitempty, version 1 unchanged).
+- L11 PR https://github.com/EndersonPro/flutree/pull/56 opened (main is protected: required check `tests`, strict, enforce_admins, conversation resolution). CI `tests` failed: TestE2ECleanOutsideGitRepositoryFails pinned the raw git error seen with a Spanish git locale; CI git is English and flutree maps it to "[precondition] Current directory is not inside a Git repository." Fixed by forcing LC_ALL=C in the test; full suite green under both locales. Codex review: 4 P2 findings — (1) complete_worktree/pubget schemas lack `confirm`; (2) path-selector keys in --package-base not normalized; (3) interactive wizard ignores --root-repo/--package paths outside scope; (4) add-repo keeps stale generated graph overrides over refreshed ones.
