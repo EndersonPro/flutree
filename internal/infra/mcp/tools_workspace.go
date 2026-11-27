@@ -138,7 +138,7 @@ func createToolOptions() []mcplib.ToolOption {
 
 func buildPlanCreateTool() mcplib.Tool {
 	opts := append([]mcplib.ToolOption{
-		mcplib.WithDescription("Dry-run a workspace creation. Use it AFTER asking the user for the name, root repo, packages and base branches, and BEFORE create_workspace. It validates everything (selectors, that every base branch exists, that the target folder is free) and returns the exact plan without creating any directory, branch or registry entry: root and package worktree paths, branches and base branches, the full pubspec_overrides.yaml content, and the workspace file. Show the plan to the user and wait for an explicit yes. Returns {name, container_path, root, packages[], override_path, override_content, workspace_file, workspace_folders, copy_root_files}."),
+		mcplib.WithDescription("Dry-run a workspace creation. Use it AFTER asking the user for the name, root repo, packages and base branches, and BEFORE create_workspace. It validates everything (selectors, that every base branch exists, that the target folder is free) and returns the exact plan without creating any directory, branch or registry entry: root and package worktree paths, branches and base branches, the full pubspec_overrides.yaml content of the root and of each package worktree that needs one (package_overrides), and the workspace file. Show the plan to the user and wait for an explicit yes. Returns {name, container_path, root, packages[], override_path, override_content, package_overrides[], workspace_file, workspace_folders, copy_root_files}."),
 		mcplib.WithReadOnlyHintAnnotation(true), mcplib.WithDestructiveHintAnnotation(false),
 	}, createToolOptions()...)
 	return mcplib.NewTool("plan_create", opts...)
@@ -159,16 +159,20 @@ func buildCreateWorkspaceTool() mcplib.Tool {
 
 // planView is the JSON shape of a dry plan.
 type planView struct {
-	Name             string        `json:"name"`
-	ContainerPath    string        `json:"container_path"`
-	Root             plannedView   `json:"root"`
-	Packages         []plannedView `json:"packages"`
-	OverridePath     string        `json:"override_path,omitempty"`
-	OverrideContent  string        `json:"override_content,omitempty"`
-	WorkspaceFile    string        `json:"workspace_file,omitempty"`
-	WorkspaceFolders []string      `json:"workspace_folders,omitempty"`
-	CopyRootFiles    []string      `json:"copy_root_files"`
-	Notes            []string      `json:"notes,omitempty"`
+	Name            string        `json:"name"`
+	ContainerPath   string        `json:"container_path"`
+	Root            plannedView   `json:"root"`
+	Packages        []plannedView `json:"packages"`
+	OverridePath    string        `json:"override_path,omitempty"`
+	OverrideContent string        `json:"override_content,omitempty"`
+	// PackageOverrides are the pubspec_overrides.yaml files of the package
+	// worktrees (selected packages that depend on other selected packages, or
+	// that carry their own dependency_overrides).
+	PackageOverrides []domain.PackageOverridePlan `json:"package_overrides,omitempty"`
+	WorkspaceFile    string                       `json:"workspace_file,omitempty"`
+	WorkspaceFolders []string                     `json:"workspace_folders,omitempty"`
+	CopyRootFiles    []string                     `json:"copy_root_files"`
+	Notes            []string                     `json:"notes,omitempty"`
 }
 
 type plannedView struct {
@@ -201,6 +205,7 @@ func toPlanView(plan domain.CreateDryPlan) planView {
 		Packages:         make([]plannedView, 0, len(plan.Packages)),
 		OverridePath:     plan.OverridePath,
 		OverrideContent:  plan.OverrideContent,
+		PackageOverrides: plan.PackageOverrides,
 		WorkspaceFile:    plan.WorkspacePath,
 		WorkspaceFolders: plan.WorkspaceFolders,
 		CopyRootFiles:    plan.RootFiles,
@@ -332,6 +337,11 @@ func describePlanForUser(v planView) string {
 	if v.OverridePath != "" {
 		b.WriteString("- generated: " + v.OverridePath + "\n")
 	}
+	for _, po := range v.PackageOverrides {
+		if po.Content != "" {
+			b.WriteString("- generated: " + po.Path + "\n")
+		}
+	}
 	if v.WorkspaceFile != "" {
 		b.WriteString("- generated: " + v.WorkspaceFile + "\n")
 	}
@@ -385,7 +395,7 @@ func makeCreateWorkspaceHandler(svc MCPServices) toolHandler {
 
 func buildWorkspaceStatusTool() mcplib.Tool {
 	return mcplib.NewTool("workspace_status",
-		mcplib.WithDescription("Inspect one existing workspace: for the root and every package its path, branch, whether the folder still exists and whether it has uncommitted changes (dirty), plus the workspace file and whether pubspec_overrides.yaml exists with its parsed entries. Use it after creating or changing a workspace, and BEFORE complete_worktree to see what would be lost. For each worktree it also reports base_branch plus ahead (commits in the worktree HEAD not in the base) and behind (commits in the base not in HEAD); when the registry has no base for a worktree (created by an older flutree) or the base no longer resolves, ahead/behind are omitted and ahead_behind_note says why. Read-only. Fails with category precondition when the name is not registered."),
+		mcplib.WithDescription("Inspect one existing workspace: for the root and every package its path, branch, whether the folder still exists and whether it has uncommitted changes (dirty), plus the workspace file and whether pubspec_overrides.yaml exists with its parsed entries (for the root and, under pubspec_overrides, for each package). Use it after creating or changing a workspace, and BEFORE complete_worktree to see what would be lost. For each worktree it also reports base_branch plus ahead (commits in the worktree HEAD not in the base) and behind (commits in the base not in HEAD); when the registry has no base for a worktree (created by an older flutree) or the base no longer resolves, ahead/behind are omitted and ahead_behind_note says why. Read-only. Fails with category precondition when the name is not registered."),
 		mcplib.WithString("name", mcplib.Required(), mcplib.Description("Workspace name, as shown by list_worktrees.")),
 		mcplib.WithReadOnlyHintAnnotation(true), mcplib.WithDestructiveHintAnnotation(false),
 	)

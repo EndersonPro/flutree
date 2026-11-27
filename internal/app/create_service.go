@@ -141,6 +141,11 @@ func (s *CreateService) BuildDryPlan(input domain.CreateInput) (domain.CreateDry
 		overrideContent = buildOverrideContent(rootPlan, packagePlans)
 	}
 
+	var packageOverridePlans []domain.PackageOverridePlan
+	if len(packagePlans) > 0 {
+		packageOverridePlans = buildPackageOverridePlans(packagePlans)
+	}
+
 	workspacePath := ""
 	workspaceFolders := []string{}
 	if input.GenerateWorkspace {
@@ -156,6 +161,7 @@ func (s *CreateService) BuildDryPlan(input domain.CreateInput) (domain.CreateDry
 		RootFiles:        mergeRootFilePatterns(input.RootFiles),
 		OverridePath:     overridePath,
 		OverrideContent:  overrideContent,
+		PackageOverrides: packageOverridePlans,
 		WorkspacePath:    workspacePath,
 		WorkspaceFolders: workspaceFolders,
 	}, nil
@@ -253,6 +259,16 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 		}
 	}
 
+	var packageOverrideResults []domain.PackageOverrideResult
+	if len(plan.Packages) > 0 {
+		results, err := writePackageOverrides(s.git, plan.Packages)
+		if err != nil {
+			rollback()
+			return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to write package pubspec_overrides.yaml.", err.Error(), err)
+		}
+		packageOverrideResults = results
+	}
+
 	if plan.WorkspacePath != "" {
 		if err := writeWorkspace(plan.WorkspacePath, plan.WorkspaceFolders); err != nil {
 			rollback()
@@ -302,6 +318,7 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 		SelectedPackages: selected,
 		WorkspacePath:    plan.WorkspacePath,
 		SDKSetup:         setupSDKs(s.sdk, s.sdkPref, targets),
+		PackageOverrides: packageOverrideResults,
 	}, nil
 }
 

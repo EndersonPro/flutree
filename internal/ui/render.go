@@ -28,6 +28,11 @@ func RenderCreateDryPlan(plan domain.CreateDryPlan) {
 	if plan.OverridePath != "" {
 		fileRows = append(fileRows, []string{"Override", plan.OverridePath})
 	}
+	for _, po := range plan.PackageOverrides {
+		if po.Content != "" {
+			fileRows = append(fileRows, []string{"Package override", po.Path})
+		}
+	}
 	if plan.WorkspacePath != "" {
 		fileRows = append(fileRows, []string{"Workspace", plan.WorkspacePath})
 	}
@@ -65,6 +70,7 @@ func RenderCreateSuccess(result domain.CreateResult) {
 		b.WriteString("\n")
 		b.WriteString(KeyValue("Workspace", result.WorkspacePath))
 	}
+	writePackageOverrideSummary(&b, result.PackageOverrides)
 	writeSDKSummary(&b, result.SDKSetup)
 	b.WriteString("\n")
 	b.WriteString(KeyValue("Next", result.NextStep))
@@ -176,6 +182,18 @@ func RenderCleanSuccess(result domain.CleanResult) {
 	fmt.Println(SuccessBox(b.String()))
 }
 
+// writePackageOverrideSummary lists the package override files and any skip note.
+func writePackageOverrideSummary(b *strings.Builder, results []domain.PackageOverrideResult) {
+	for _, r := range results {
+		b.WriteString("\n")
+		line := r.Status + " " + r.Path
+		if r.Note != "" {
+			line += " (" + r.Note + ")"
+		}
+		b.WriteString(KeyValue("Package override "+r.Repo, line))
+	}
+}
+
 func RenderAddRepoSuccess(result domain.AddRepoResult) {
 	var b strings.Builder
 	b.WriteString(KeyValue("Workspace", result.WorkspaceName))
@@ -185,6 +203,7 @@ func RenderAddRepoSuccess(result domain.AddRepoResult) {
 	b.WriteString(KeyValue("Added repos", strings.Join(result.AddedRepos, ", ")))
 	b.WriteString("\n")
 	b.WriteString(KeyValue("Override updated", result.OverridePath))
+	writePackageOverrideSummary(&b, result.PackageOverrides)
 	writeSDKSummary(&b, result.SDKSetup)
 
 	header := uiIconStyle.Render("✅") + uiSuccessHeader.Render("Repository Attached")

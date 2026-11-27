@@ -31,7 +31,7 @@ It has native AI agent support: `flutree mcp install` plugs it into Claude Code,
 
 - **AI-native (MCP)**: a built-in MCP server (`flutree mcp serve`) with 15 tools, resources and prompts. The agent discovers your repos, plans a workspace, asks you for the missing decisions and creates it only after you confirm.
 - **Interactive create**: a wizard that works from any directory, with a folder navigator, filter-as-you-type lists and a dry plan before anything is written.
-- **Overrides and dependency graph**: one `pubspec_overrides.yaml` in the root worktree. It keeps the overrides already in your `pubspec.yaml` and resolves the whole dependency graph from the selected worktrees.
+- **Overrides and dependency graph**: a `pubspec_overrides.yaml` in the root worktree and in every package worktree that depends on other selected packages. They keep the overrides already in your `pubspec.yaml` and resolve the whole dependency graph from the selected worktrees.
 - **Multi-repo workspaces**: root and package worktrees grouped in one folder, with an optional VSCode `.code-workspace`.
 - **SDK setup**: runs `fvm` or `puro` in every new worktree so each one uses the right Flutter SDK.
 - **`--json` everywhere**: machine-readable output and JSON error envelopes for scripts and CI.
@@ -646,7 +646,7 @@ Default destination root is `~/Documents/worktrees`. Each workspace is one folde
 ```text
 ~/Documents/worktrees/<worktree-name-slug>/
   root/<root-repo-folder>/          # the root app worktree (holds pubspec_overrides.yaml)
-  packages/<package-repo-folder>/   # one worktree per selected package
+  packages/<package-repo-folder>/   # one worktree per selected package (holds its own pubspec_overrides.yaml when it needs one)
   <name>.code-workspace             # optional, folders only
 ```
 
@@ -658,6 +658,8 @@ Default destination root is `~/Documents/worktrees`. Each workspace is one folde
 - It keeps every `dependency_overrides` entry already declared in the root `pubspec.yaml` (version, `path`, `git`, `hosted`), because a `pubspec_overrides.yaml` replaces those instead of merging with them. Relative paths that point outside the repository are rebased so they still resolve from the worktree; selected package worktrees win on conflict.
 - The whole dependency graph is resolved from the worktrees, so transitive path dependencies between selected packages point at their worktrees too.
 - The file is ignored through `.git/info/exclude` (never committed); the tracked `.gitignore` is not modified. `pubspec.yaml` is never modified.
+- Each selected package worktree gets its own `pubspec_overrides.yaml` too, because `flutree pubget` resolves inside every package and pub only reads the overrides of the package it resolves. It points the selected packages that package depends on (directly or through other selected packages, whatever the dependency spec: `path`, `git`, hosted or version) at their worktrees, and carries the package's own `dependency_overrides` with the same rules as the root. Paths are relative to the package worktree.
+- A package that needs nothing gets no file. A package that uses Dart pub workspaces (`resolution: workspace`) is skipped, and the `--json` result lists it under `package_overrides` with a note. `add-repo` regenerates the files of every package worktree; entries you edited by hand survive.
 
 The VSCode workspace output is minimal and includes `folders` entries only (no `settings`, `tasks` or `launch`). Use `--no-workspace` or `flutree config set workspace.generate false` to skip it.
 

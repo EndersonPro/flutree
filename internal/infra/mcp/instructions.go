@@ -88,7 +88,17 @@ precedence first:
 ` + "`pubspec.yaml`" + ` is never modified. The override file is listed in the root
 repository's ` + "`.git/info/exclude`" + ` so it is never committed; ` + "`.gitignore`" + ` is untouched.
 
-Paths are relative to the root worktree. Example (` + "`core`" + ` and ` + "`ui`" + ` selected):
+Each selected package worktree gets its own ` + "`pubspec_overrides.yaml`" + ` too, because
+` + "`pubget`" + ` resolves inside every package and pub only reads the overrides of the package it
+resolves. It points the selected packages that package depends on (directly or through other
+selected packages, whatever the dependency spec: path, git, hosted or version) at their
+worktrees, and carries the package's own ` + "`dependency_overrides`" + ` with the same rules as
+the root. A package that needs nothing gets no file, and a package that uses Dart pub workspaces
+(` + "`resolution: workspace`" + `) is skipped with a note. plan_create lists these files under
+` + "`package_overrides`" + `; workspace_status reports whether each exists. They are git-excluded
+in their own repository and ` + "`add_repo`" + ` regenerates them all.
+
+Paths are relative to the worktree that holds the file. Example (` + "`core`" + ` and ` + "`ui`" + ` selected):
 
 ` + "```yaml" + `
 dependency_overrides:

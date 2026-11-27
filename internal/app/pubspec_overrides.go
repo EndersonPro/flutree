@@ -38,24 +38,12 @@ type overrideSet map[string]*yaml.Node
 // Plain path dependencies are carried as well (see deriveGraphOverrides) at the
 // lowest precedence, so the whole graph resolves from the worktrees.
 func writeOverrideFile(overridePath, worktreePath, sourceRepoRoot string, packages []domain.PlannedWorktree) error {
-	pubspecOverrides, err := readOverridesSection(filepath.Join(worktreePath, "pubspec.yaml"))
-	if err != nil {
-		return err
-	}
-	rebasePathOverrides(pubspecOverrides, sourceRepoRootOr(sourceRepoRoot, worktreePath), worktreePath)
-
-	existing, err := readOverridesSection(overridePath)
-	if err != nil {
-		return err
-	}
-
-	derived, err := deriveGraphOverrides(worktreePath, sourceRepoRootOr(sourceRepoRoot, worktreePath), packages, false)
-	if err != nil {
-		return err
-	}
-	dropStaleGenerated(existing, derived, worktreePath, packages)
-	merged := mergeOverrides(derived, pubspecOverrides, existing, packageOverrides(worktreePath, packages))
-	content, err := formatOverrides(merged)
+	content, _, err := renderOverrides(overrideTarget{
+		worktree:     worktreePath,
+		source:       sourceRepoRootOr(sourceRepoRoot, worktreePath),
+		overridePath: overridePath,
+		packages:     packages,
+	})
 	if err != nil {
 		return err
 	}
@@ -63,6 +51,69 @@ func writeOverrideFile(overridePath, worktreePath, sourceRepoRoot string, packag
 		return nil
 	}
 	return os.WriteFile(overridePath, []byte(content), 0o644)
+}
+
+// overrideTarget describes one pubspec_overrides.yaml to compute: the root's or
+// a package's. Both are computed from the point of view of their own worktree
+// and source repository, over the packages that belong to their graph.
+type overrideTarget struct {
+	worktree     string
+	source       string
+	overridePath string
+	// packages are the selected package worktrees whose graph this file covers.
+	packages []domain.PlannedWorktree
+	// self is the package name of the target when it is a package; it never gets
+	// an entry for itself.
+	self string
+	// fromSource reads the pubspecs from the source checkouts, for the dry plan
+	// before any worktree exists. It also tolerates unreadable pubspecs.
+	fromSource bool
+}
+
+// renderOverrides computes the content of a pubspec_overrides.yaml and the
+// number of entries it carries (zero means nothing is needed).
+func renderOverrides(t overrideTarget) (string, int, error) {
+	pubspecDir := t.worktree
+	if t.fromSource {
+		pubspecDir = t.source
+	}
+	pubspecOverrides, err := readOverridesSection(filepath.Join(pubspecDir, "pubspec.yaml"))
+	if err != nil {
+		if !t.fromSource {
+			return "", 0, err
+		}
+		pubspecOverrides = overrideSet{}
+	}
+	rebasePathOverrides(pubspecOverrides, t.source, t.worktree)
+
+	existing := overrideSet{}
+	if !t.fromSource {
+		existing, err = readOverridesSection(t.overridePath)
+		if err != nil {
+			return "", 0, err
+		}
+	}
+
+	derived, err := deriveGraphOverrides(t.worktree, t.source, t.packages, t.fromSource)
+	if err != nil {
+		if !t.fromSource {
+			return "", 0, err
+		}
+		derived = overrideSet{}
+	}
+	dropStaleGenerated(existing, derived, t.worktree, t.packages)
+	merged := mergeOverrides(derived, pubspecOverrides, existing, packageOverrides(t.worktree, t.packages))
+	if t.self != "" {
+		delete(merged, t.self)
+	}
+	content, err := formatOverrides(merged)
+	if err != nil {
+		if t.fromSource {
+			return emptyOverrideContent, 0, nil
+		}
+		return "", 0, err
+	}
+	return content, len(merged), nil
 }
 
 // dropStaleGenerated removes from existing the entries a previous run generated
@@ -101,19 +152,12 @@ func dropStaleGenerated(existing, derived overrideSet, worktreePath string, pack
 // buildOverrideContent renders the override file shown in the dry plan, before
 // the root worktree exists, from the source repository's pubspec.yaml.
 func buildOverrideContent(root domain.PlannedWorktree, packages []domain.PlannedWorktree) string {
-	pubspecOverrides, err := readOverridesSection(filepath.Join(root.Repo.RepoRoot, "pubspec.yaml"))
-	if err != nil {
-		pubspecOverrides = overrideSet{}
-	}
-	rebasePathOverrides(pubspecOverrides, root.Repo.RepoRoot, root.Path)
-	derived, err := deriveGraphOverrides(root.Path, root.Repo.RepoRoot, packages, true)
-	if err != nil {
-		derived = overrideSet{}
-	}
-	content, err := formatOverrides(mergeOverrides(derived, pubspecOverrides, packageOverrides(root.Path, packages)))
-	if err != nil {
-		return emptyOverrideContent
-	}
+	content, _, _ := renderOverrides(overrideTarget{
+		worktree:   root.Path,
+		source:     root.Repo.RepoRoot,
+		packages:   packages,
+		fromSource: true,
+	})
 	return content
 }
 
@@ -392,4 +436,178 @@ func sortedNames(set overrideSet) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// Package override files.
+//
+// `flutree pubget` runs pub get inside every package worktree, and pub only
+// honours the overrides of the package it resolves, so a selected package that
+// depends on another selected package needs its own pubspec_overrides.yaml
+// pointing at that package's worktree. It is computed with the same rules as the
+// root file, from the point of view of the package worktree and its source repo.
+
+const (
+	packageOverrideWritten   = "written"
+	packageOverrideSkipped   = "skipped"
+	packageOverrideUnchanged = "unchanged"
+)
+
+// packageOverridePlan is the file one package worktree needs.
+type packageOverridePlan struct {
+	pkg     domain.PlannedWorktree
+	path    string
+	content string
+	// skipNote is set when flutree deliberately writes nothing for this package.
+	skipNote string
+	// needed is false when the package has no entry to override.
+	needed bool
+}
+
+// packageUsesPubWorkspace reports whether the pubspec in dir opts into Dart pub
+// workspaces (`resolution: workspace`).
+func packageUsesPubWorkspace(dir string) bool {
+	content, err := os.ReadFile(filepath.Join(dir, "pubspec.yaml"))
+	if err != nil {
+		return false
+	}
+	var doc struct {
+		Resolution string `yaml:"resolution"`
+	}
+	if yaml.Unmarshal(content, &doc) != nil {
+		return false
+	}
+	return strings.TrimSpace(doc.Resolution) == "workspace"
+}
+
+// packageGraphMembers returns the selected packages pkg depends on, directly or
+// through other selected packages, ordered by package name. The package's own
+// dependencies and dev_dependencies seed the search; selected packages it
+// reaches contribute their dependencies. Specs of any shape (path, git, hosted,
+// version) count: only the package name matters.
+func packageGraphMembers(pkg domain.PlannedWorktree, all []domain.PlannedWorktree, fromSource bool) ([]domain.PlannedWorktree, error) {
+	byName := map[string]domain.PlannedWorktree{}
+	for _, other := range all {
+		if other.Repo.PackageName != "" && other.Repo.PackageName != pkg.Repo.PackageName {
+			byName[other.Repo.PackageName] = other
+		}
+	}
+	pubspecOf := func(p domain.PlannedWorktree) string {
+		dir := p.Path
+		if fromSource {
+			dir = p.Repo.RepoRoot
+		}
+		return filepath.Join(dir, "pubspec.yaml")
+	}
+
+	var queue []string
+	read := func(p domain.PlannedWorktree, sections ...string) error {
+		for _, section := range sections {
+			deps, err := readPubspecSection(pubspecOf(p), section)
+			if err != nil {
+				return err
+			}
+			queue = append(queue, sortedNames(deps)...)
+		}
+		return nil
+	}
+	if err := read(pkg, "dependencies", "dev_dependencies"); err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	members := []domain.PlannedWorktree{}
+	for len(queue) > 0 {
+		name := queue[0]
+		queue = queue[1:]
+		member, ok := byName[name]
+		if !ok || seen[name] {
+			continue
+		}
+		seen[name] = true
+		members = append(members, member)
+		if err := read(member, "dependencies"); err != nil {
+			return nil, err
+		}
+	}
+	sort.Slice(members, func(i, j int) bool { return members[i].Repo.PackageName < members[j].Repo.PackageName })
+	return members, nil
+}
+
+// planPackageOverride computes the override file of one package worktree.
+func planPackageOverride(pkg domain.PlannedWorktree, all []domain.PlannedWorktree, fromSource bool) (packageOverridePlan, error) {
+	plan := packageOverridePlan{pkg: pkg, path: filepath.Join(pkg.Path, overrideFileName)}
+	pubspecDir := pkg.Path
+	if fromSource {
+		pubspecDir = pkg.Repo.RepoRoot
+	}
+	if packageUsesPubWorkspace(pubspecDir) {
+		plan.skipNote = "Uses Dart pub workspaces (resolution: workspace); flutree does not write overrides for it."
+		return plan, nil
+	}
+	members, err := packageGraphMembers(pkg, all, fromSource)
+	if err != nil {
+		return plan, err
+	}
+	content, entries, err := renderOverrides(overrideTarget{
+		worktree:     pkg.Path,
+		source:       pkg.Repo.RepoRoot,
+		overridePath: plan.path,
+		packages:     members,
+		self:         pkg.Repo.PackageName,
+		fromSource:   fromSource,
+	})
+	if err != nil {
+		return plan, err
+	}
+	plan.content, plan.needed = content, entries > 0
+	return plan, nil
+}
+
+// buildPackageOverridePlans renders, for the dry plan, the file every package
+// worktree will get. Packages that need nothing are left out.
+func buildPackageOverridePlans(packages []domain.PlannedWorktree) []domain.PackageOverridePlan {
+	out := []domain.PackageOverridePlan{}
+	for _, pkg := range packages {
+		plan, err := planPackageOverride(pkg, packages, true)
+		if err != nil || (!plan.needed && plan.skipNote == "") {
+			continue
+		}
+		entry := domain.PackageOverridePlan{Repo: pkg.Repo.Name, Path: plan.path, Note: plan.skipNote}
+		if plan.needed {
+			entry.Content = plan.content
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// writePackageOverrides writes the override file of every package worktree and
+// excludes it locally. A package that needs no entry gets no file.
+func writePackageOverrides(git interface{ EnsureLocalExclude(string, string) error }, packages []domain.PlannedWorktree) ([]domain.PackageOverrideResult, error) {
+	results := []domain.PackageOverrideResult{}
+	for _, pkg := range packages {
+		plan, err := planPackageOverride(pkg, packages, false)
+		if err != nil {
+			return results, fmt.Errorf("%s: %w", pkg.Repo.Name, err)
+		}
+		result := domain.PackageOverrideResult{Repo: pkg.Repo.Name, Path: plan.path}
+		switch {
+		case plan.skipNote != "":
+			result.Status, result.Note = packageOverrideSkipped, plan.skipNote
+		case !plan.needed:
+			continue
+		default:
+			if current, err := os.ReadFile(plan.path); err == nil && string(current) == plan.content {
+				result.Status = packageOverrideUnchanged
+			} else if err := os.WriteFile(plan.path, []byte(plan.content), 0o644); err != nil {
+				return results, fmt.Errorf("%s: %w", pkg.Repo.Name, err)
+			} else {
+				result.Status = packageOverrideWritten
+			}
+			if err := git.EnsureLocalExclude(pkg.Path, overrideExcludePattern); err != nil {
+				return results, fmt.Errorf("%s: %w", pkg.Repo.Name, err)
+			}
+		}
+		results = append(results, result)
+	}
+	return results, nil
 }

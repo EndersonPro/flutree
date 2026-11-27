@@ -134,10 +134,16 @@ Generated worktrees are grouped into:
 - packages: `~/Documents/worktrees/<worktree-name-slug>/packages/<package-repo-folder>/`
 
 Package override output:
-- `flutree create` writes exactly one `pubspec_overrides.yaml` in the selected root worktree when at least one package is selected; root-only workspaces (`--no-package`) get no override file.
+- `flutree create` writes one `pubspec_overrides.yaml` in the selected root worktree when at least one package is selected; root-only workspaces (`--no-package`) get no override file.
   - It keeps every `dependency_overrides` entry already declared in the root `pubspec.yaml` (version, `path`, `git`, `hosted`), because a `pubspec_overrides.yaml` replaces those instead of merging with them. Relative paths that point outside the repository are rebased so they still resolve from the worktree; selected package worktrees win on conflict.
   - The file is ignored through `.git/info/exclude` (never committed); the tracked `.gitignore` is not modified.
 - dependency paths target selected package worktree paths.
+- Each selected package worktree also gets its own `pubspec_overrides.yaml`, because `flutree pubget` resolves inside every package and pub only reads the overrides of the package it resolves.
+  - It points every selected package that package depends on, directly or through other selected packages, at that package's worktree. Any dependency spec counts (`path`, `git`, hosted or version). It never lists the package itself or selected packages outside its graph; paths are relative to the package worktree.
+  - It carries the package's own `dependency_overrides` with the same rules as the root file (relative paths that leave the repository are rebased, paths inside the repository are kept). Precedence: selected worktrees, then entries already in the file (your edits survive), then the package's own overrides, then derived path dependencies.
+  - A package that needs no entry gets no file. A package that uses Dart pub workspaces (`resolution: workspace`) is skipped; the result reports a `skipped` entry with a note.
+  - Each file is ignored through that package repository's `.git/info/exclude`, so the worktree stays clean and `complete` works without `--force`.
+  - `create` and `add-repo` report them in the `package_overrides` list of the `--json` result (`{repo, path, status, note?}` with status `written`, `unchanged` or `skipped`). `add-repo` regenerates the files of all package worktrees, since a new package can be a dependency of existing ones.
 - `pubspec.yaml` is never modified by this workflow.
 
 VSCode workspace output (MVP):
