@@ -154,10 +154,10 @@ func requiresConfirmation(ctx context.Context, req mcplib.CallToolRequest, spec 
 		})
 		switch ans.outcome {
 		case askAccepted:
-			if v, present := ans.content["confirm"]; present {
-				if b, ok := v.(bool); !ok || !b {
-					return declinedResult(spec.Pending, askDeclined), false
-				}
+			// Fail closed: only an explicit confirm=true proceeds. An accept
+			// that omits the field (a non-conforming client) is a decline.
+			if b, ok := ans.content["confirm"].(bool); !ok || !b {
+				return declinedResult(spec.Pending, askDeclined), false
 			}
 			return nil, true
 		case askDeclined, askCancelled:

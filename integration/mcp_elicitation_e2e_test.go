@@ -269,6 +269,7 @@ func TestE2EMCPElicitationDeclineAndCancelCreateNothing(t *testing.T) {
 		{"decline", declineAnswer, "declined_by_user"},
 		{"cancel", cancelAnswer, "cancelled_by_user"},
 		{"accept with confirm=false", accept(map[string]any{"confirm": false}), "declined_by_user"},
+		{"accept without confirm", accept(map[string]any{}), "declined_by_user"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
