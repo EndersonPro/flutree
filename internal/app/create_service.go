@@ -17,8 +17,6 @@ type CreateService struct {
 	prompt   PromptPort
 }
 
-const overrideFileName = "pubspec_overrides.yaml"
-
 func NewCreateService(git GitPort, registry RegistryPort, prompt PromptPort) *CreateService {
 	return &CreateService{git: git, registry: registry, prompt: prompt}
 }
@@ -173,7 +171,7 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 		created = append(created, pkg)
 	}
 
-	if err := writeOverrideFile(plan.OverridePath, plan.Root.Path, plan.Packages); err != nil {
+	if err := writeOverrideFile(plan.OverridePath, plan.Root.Path, plan.Root.Repo.RepoRoot, plan.Packages); err != nil {
 		rollback()
 		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to write pubspec_overrides.yaml.", plan.OverridePath, err)
 	}
@@ -405,178 +403,6 @@ func findRepoBySelector(repos []domain.DiscoveredFlutterRepo, selector string) (
 
 func repoLabel(repo domain.DiscoveredFlutterRepo) string {
 	return fmt.Sprintf("%s [%s] (%s)", repo.Name, repo.PackageName, repo.RepoRoot)
-}
-
-func buildOverrideContent(root domain.PlannedWorktree, packages []domain.PlannedWorktree) string {
-	entries := buildOverrideEntriesMap(root, packages, nil)
-	return formatOverrideYAML(entries)
-}
-
-// OverrideEntry represents a single dependency_override entry.
-type OverrideEntry struct {
-	PackageName  string
-	RelativePath string
-}
-
-// buildOverrideEntriesMap merges new packages with existing entries.
-// existingEntries may be nil. When package name collides, new wins.
-func buildOverrideEntriesMap(root domain.PlannedWorktree, packages []domain.PlannedWorktree, existingEntries map[string]string) map[string]string {
-	entries := make(map[string]string)
-	// Seed with existing entries first (will be overwritten by new if duplicate).
-	for pkg, relPath := range existingEntries {
-		entries[pkg] = relPath
-	}
-	// Add new packages (overwrites any existing with same package name).
-	for _, pkg := range packages {
-		rel, err := filepath.Rel(root.Path, pkg.Path)
-		if err != nil {
-			rel = pkg.Path
-		}
-		entries[pkg.Repo.PackageName] = filepath.ToSlash(rel)
-	}
-	return entries
-}
-
-// Merge existing overrides from pubspec.yaml into the overrides map.
-// Returns the updated entries map with pubspec overrides included.
-// Pubspec overrides are only moved if not already present in entries (new wins on conflict).
-// Only path-based overrides are migrated; git/version-based overrides are skipped.
-func mergePubspecOverrides(entries map[string]string, pubspecPath string) map[string]string {
-	content, err := os.ReadFile(pubspecPath)
-	if err != nil {
-		return entries
-	}
-	parsing := false
-	var currentPkg string
-	for _, rawLine := range strings.Split(string(content), "\n") {
-		// Strip Windows-style line endings before any processing.
-		rawLine = strings.TrimRight(rawLine, "\r")
-		line := strings.TrimSpace(rawLine)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if strings.HasPrefix(line, "dependency_overrides:") {
-			parsing = true
-			currentPkg = ""
-			continue
-		}
-		if !parsing {
-			continue
-		}
-		// Determine indentation from the raw line (before trimming).
-		indent := len(rawLine) - len(strings.TrimLeft(rawLine, " \t"))
-		// A non-empty, non-comment, zero-indented line after the section begins
-		// means we've reached the next top-level key — stop parsing.
-		if indent == 0 {
-			break
-		}
-		// Package names appear at indent 2 (one level of 2-space indentation).
-		// Their sub-keys (path:, git:, …) appear at indent 4 or deeper.
-		if indent == 2 && strings.HasSuffix(line, ":") {
-			currentPkg = strings.TrimSuffix(line, ":")
-			continue
-		}
-		if indent >= 4 && currentPkg != "" {
-			if strings.HasPrefix(line, "path:") {
-				relPath := strings.TrimSpace(strings.TrimPrefix(line, "path:"))
-				relPath = strings.Trim(relPath, "\"'")
-				if relPath != "" {
-					if _, exists := entries[currentPkg]; !exists {
-						entries[currentPkg] = relPath
-					}
-				}
-				currentPkg = ""
-			} else if indent == 4 {
-				// A different sub-key at depth 4 (e.g. git:) — not a path override; skip pkg.
-				currentPkg = ""
-			}
-		}
-	}
-	return entries
-}
-
-// readExistingOverrides reads the current pubspec_overrides.yaml and returns
-// a map of package name -> relative path. Returns nil if file doesn't exist.
-// The file format is produced by formatOverrideYAML: package names at 2-space
-// indent, path values at 4-space indent.
-func readExistingOverrides(overridePath string) map[string]string {
-	content, err := os.ReadFile(overridePath)
-	if err != nil {
-		return nil
-	}
-	entries := make(map[string]string)
-	var currentPkg string
-	for _, rawLine := range strings.Split(string(content), "\n") {
-		// Strip Windows-style line endings before any processing.
-		rawLine = strings.TrimRight(rawLine, "\r")
-		line := strings.TrimSpace(rawLine)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if line == "dependency_overrides:" || line == "{}" {
-			continue
-		}
-		// Determine indentation from the raw line (before trimming).
-		indent := len(rawLine) - len(strings.TrimLeft(rawLine, " \t"))
-		// Package names at indent 2 (format: "  pkg_name:").
-		if indent == 2 && strings.HasSuffix(line, ":") {
-			currentPkg = strings.TrimSuffix(line, ":")
-			continue
-		}
-		// Path values at indent 4 (format: "    path: ../value").
-		if indent == 4 && currentPkg != "" && strings.HasPrefix(line, "path:") {
-			pathVal := strings.TrimSpace(strings.TrimPrefix(line, "path:"))
-			pathVal = strings.Trim(pathVal, "\"'")
-			if pathVal != "" {
-				entries[currentPkg] = pathVal
-			}
-			currentPkg = ""
-		}
-	}
-	return entries
-}
-
-// writeOverrideFile reads existing overrides, merges pubspec.yaml overrides,
-// adds new packages, and writes the merged result. Skips write if content unchanged.
-func writeOverrideFile(overridePath, rootPath string, newPackages []domain.PlannedWorktree) error {
-	pubspecPath := filepath.Join(rootPath, "pubspec.yaml")
-	entries := readExistingOverrides(overridePath)
-	if entries == nil {
-		entries = make(map[string]string)
-	}
-	entries = mergePubspecOverrides(entries, pubspecPath)
-	for _, pkg := range newPackages {
-		rel, err := filepath.Rel(rootPath, pkg.Path)
-		if err != nil {
-			rel = pkg.Path
-		}
-		entries[pkg.Repo.PackageName] = filepath.ToSlash(rel)
-	}
-	newContent := formatOverrideYAML(entries)
-	existingContent, err := os.ReadFile(overridePath)
-	if err == nil && string(existingContent) == newContent {
-		return nil
-	}
-	return os.WriteFile(overridePath, []byte(newContent), 0o644)
-}
-
-// formatOverrideYAML generates the YAML content from entries map,
-// sorted alphabetically for deterministic output.
-func formatOverrideYAML(entries map[string]string) string {
-	if len(entries) == 0 {
-		return "dependency_overrides:\n  {}\n"
-	}
-	var sorted []string
-	for pkg := range entries {
-		sorted = append(sorted, pkg)
-	}
-	sort.Strings(sorted)
-	lines := []string{"dependency_overrides:"}
-	for _, pkg := range sorted {
-		lines = append(lines, "  "+pkg+":")
-		lines = append(lines, "    path: "+entries[pkg])
-	}
-	return strings.Join(lines, "\n") + "\n"
 }
 
 func buildWorkspaceFolders(root domain.PlannedWorktree, packages []domain.PlannedWorktree, container string) []string {

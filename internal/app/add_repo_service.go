@@ -233,7 +233,7 @@ func (s *AddRepoService) Run(input domain.AddRepoInput) (domain.AddRepoResult, e
 	}
 
 	overridePath := filepath.Join(rootRecord.Path, overrideFileName)
-	if err := writeOverrideFile(overridePath, rootRecord.Path, overridePackages); err != nil {
+	if err := writeOverrideFile(overridePath, rootRecord.Path, rootRecord.RepoRoot, overridePackages); err != nil {
 		rollback()
 		return domain.AddRepoResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to update pubspec_overrides.yaml.", overridePath, err)
 	}

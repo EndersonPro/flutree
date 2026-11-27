@@ -14,6 +14,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.3.1
 	github.com/spf13/cobra v1.10.2
 	github.com/tidwall/jsonc v0.3.3
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
