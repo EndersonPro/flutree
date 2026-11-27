@@ -16,6 +16,8 @@ import (
 type codexMerger struct {
 	baseDir  string // injectable for tests
 	lookPath func(string) (string, error)
+	scope    Scope
+	cwd      string
 }
 
 // NewCodexMerger returns a Merger for the Codex client.
@@ -60,8 +62,7 @@ func (c *codexMerger) Merge(absCmd string, force bool) (Outcome, error) {
 	if err != nil {
 		return OutcomeError, fmt.Errorf("codex: resolve home dir: %w", err)
 	}
-	codexDir := filepath.Join(base, ".codex")
-	path := filepath.Join(codexDir, "config.toml")
+	path := c.configFile(base)
 
 	// Load or initialize as a generic map to preserve all unrelated keys.
 	raw, err := os.ReadFile(path)
@@ -137,7 +138,77 @@ func (c *codexMerger) ConfigPath() string {
 	if err != nil {
 		return ""
 	}
+	return c.configFile(base)
+}
+
+// configFile is ~/.codex/config.toml for user scope and <cwd>/.codex/config.toml
+// for project scope.
+func (c *codexMerger) configFile(base string) string {
+	if c.scope == ScopeProject {
+		return filepath.Join(c.cwd, ".codex", "config.toml")
+	}
 	return filepath.Join(base, ".codex", "config.toml")
+}
+
+func (c *codexMerger) WithScope(scope Scope, cwd string) (Client, bool) {
+	cp := *c
+	cp.scope, cp.cwd = scope, cwd
+	return &cp, true
+}
+
+func (c *codexMerger) Preview(absCmd string) (string, error) {
+	data, err := toml.Marshal(map[string]any{"mcp_servers": map[string]any{entryName: map[string]any{
+		"command": absCmd,
+		"args":    []string{"mcp", "serve"},
+	}}})
+	return string(data), err
+}
+
+// Remove deletes only [mcp_servers.flutree]. Comments in a config that holds
+// the entry are refused (the TOML round-trip would drop them).
+func (c *codexMerger) Remove() (Outcome, error) {
+	path := c.ConfigPath()
+	root, err := loadTOMLMap(path)
+	if err != nil {
+		return OutcomeError, fmt.Errorf("codex: %w", err)
+	}
+	servers, err := getOrCreateAnyMap(root, "mcp_servers")
+	if err != nil {
+		return OutcomeError, fmt.Errorf("codex: mcp_servers key: %w", err)
+	}
+	if _, ok := servers[entryName]; !ok {
+		return OutcomeNotFound, nil
+	}
+	if raw, _ := os.ReadFile(path); tomlHasComments(raw) {
+		return OutcomeError, fmt.Errorf("codex: config contains TOML comments; remove [mcp_servers.%s] from %s by hand", entryName, path)
+	}
+	delete(servers, entryName)
+	if len(servers) == 0 {
+		delete(root, "mcp_servers")
+	} else {
+		root["mcp_servers"] = servers
+	}
+	if err := writeTOMLMap(path, root); err != nil {
+		return OutcomeError, fmt.Errorf("codex: write config: %w", err)
+	}
+	return OutcomeRemoved, nil
+}
+
+func (c *codexMerger) EntryCommand() (string, bool, error) {
+	root, err := loadTOMLMap(c.ConfigPath())
+	if err != nil {
+		return "", false, fmt.Errorf("codex: %w", err)
+	}
+	servers, err := getOrCreateAnyMap(root, "mcp_servers")
+	if err != nil {
+		return "", false, err
+	}
+	e, ok := servers[entryName].(map[string]any)
+	if !ok {
+		return "", false, nil
+	}
+	cmd, _ := e["command"].(string)
+	return cmd, true, nil
 }
 
 // tomlHasComments returns true when raw TOML bytes contain a '#' character

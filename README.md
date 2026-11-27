@@ -21,6 +21,7 @@
   - [list](#list)
   - [complete](#complete)
   - [pubget](#pubget)
+  - [completion](#completion)
 - [🛠️ Quickstart](#%EF%B8%8F-quickstart)
 - [🆕 Recent CLI adjustments](#-recent-cli-adjustments)
 - [⚙️ Advanced Usage](#%EF%B8%8F-advanced-usage)
@@ -114,6 +115,13 @@ Default destination root is `~/Documents/worktrees`, generating:
 
 ## 🆕 Recent CLI adjustments
 
+- **2.0 (breaking):** the CLI is built on [Cobra](https://github.com/spf13/cobra):
+  - help is Cobra-formatted and also available as `flutree help <command>`,
+  - flags may appear before or after positional arguments (`flutree create --non-interactive feature-x`),
+  - `--json` is a global flag and works before or after the command (`flutree --json list`),
+  - unknown commands report `unknown command "x" for "flutree"` with suggestions (exit code `2`),
+  - new `flutree completion <bash|zsh|fish|powershell>` command,
+  - long flags require two dashes: single-dash forms such as `-all` or `-json` are no longer accepted (use `--all`, `--json`).
 - Every subcommand supports command-scoped help via `--help` and `-h`.
 - `create --no-package` is now an explicit root-only mode:
   - package selection is skipped in interactive mode,
@@ -160,7 +168,9 @@ flutree create feature-login --scope . --root-repo root-app --yes --non-interact
 ```
 
 Package override generation rules:
-- `flutree create` writes one `pubspec_overrides.yaml` in the selected root worktree.
+- `flutree create` writes one `pubspec_overrides.yaml` in the selected root worktree when at least one package is selected; root-only workspaces (`--no-package`) get no override file.
+  - It keeps every `dependency_overrides` entry already declared in the root `pubspec.yaml` (version, `path`, `git`, `hosted`), because a `pubspec_overrides.yaml` replaces those instead of merging with them. Relative paths that point outside the repository are rebased so they still resolve from the worktree; selected package worktrees win on conflict.
+  - The file is ignored through `.git/info/exclude` (never committed); the tracked `.gitignore` is not modified.
 - `pubspec.yaml` is not modified.
 
 VSCode workspace output is MVP-only and includes `folders` entries only.
@@ -171,8 +181,8 @@ Use `--no-workspace` to skip `.code-workspace` output entirely.
 
 All subcommands support:
 
-- `--help`
-- `-h`
+- `--help` / `-h` (or `flutree help <command>`)
+- `--json` (global flag) to print machine-readable output and JSON error envelopes
 
 ### create
 
@@ -180,7 +190,7 @@ Creates a managed worktree and stores metadata in a global registry.
 
 Usage:
 ```
-flutree create <name> [options]
+flutree create <name> [flags]
 ```
 
 | Flag | Type | Default | Description |
@@ -188,16 +198,18 @@ flutree create <name> [options]
 | `--branch` | string | `feature/<name>` | Target branch name |
 | `--base-branch` | string | `main` | Base branch for worktree creation |
 | `--scope` | string | `.` | Directory scope used to discover Flutter repositories |
-| `--root-repo` | string |  | Root repository selector (required in non-interactive mode) |
+| `--root-repo` | string |  | Root repository selector: name, package name or path to a Flutter repo, may be outside `--scope` (required in non-interactive mode) |
 | `--workspace` | boolean | `true` | Generate VSCode workspace file |
 | `--no-workspace` | boolean | `false` | Disable VSCode workspace generation |
 | `--yes` | boolean | `false` | Acknowledge dry plan automatically in non-interactive mode |
 | `--non-interactive` | boolean | `false` | Disable prompts |
 | `--reuse-existing-branch` | boolean | `false` | Reuse existing local branch in non-interactive mode |
 | `--no-package` | boolean | `false` | Root-only mode (skip package selection and package metadata) |
-| `--package` | string |  | Package repository selector (repeatable) |
-| `--package-base` | string |  | Override package base branch as `<selector>=<branch>` (repeatable) |
+| `--package` | string |  | Package repository selector: name, package name or path to a Flutter repo (repeatable) |
+| `--package-base` | string |  | Override package base branch as `<selector>=<branch>` (repeatable). Default `develop` must exist locally or on origin, otherwise create fails with exit 2 before changing anything |
 | `--copy-root-file` | string |  | Extra root-level file/pattern to copy into each worktree (repeatable). By default `.env` and `.env.*` are copied when present |
+
+Interactive mode can be run from any directory. When the scope has no Flutter repositories, a folder navigator opens (`Up`/`Down` move, `Enter` opens a folder, `Tab` selects the current folder as scope, `Esc` goes up one folder, then back); folders that are Flutter repositories are marked `[flutter]` and `Tab` on one selects it directly as the root. On the packages step press `ctrl+o` to add packages from any folder (`Tab` on a Flutter repo adds it selected, `Tab` on another folder adds the repos found under it), so root and packages can live in unrelated folders. Press `ctrl+o` on the root step to change folder at any time. A failed create deletes the branches it created. The root and package lists filter as you type. If the scope you picked differs from `scope.root`, the review step offers to save it as the default scope (`s` toggles, on by default). Non-interactive mode is unchanged.
 
 ### add-repo
 
@@ -206,13 +218,13 @@ In interactive TTY mode (without `--repo` and without `--non-interactive`) it la
 
 Usage:
 ```
-flutree add-repo <workspace> [options]
+flutree add-repo <workspace> [flags]
 ```
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--scope` | string | `.` | Directory scope used to discover Flutter repositories |
-| `--repo` | string |  | Repository selector to attach (repeatable). Required in non-interactive mode; bypasses interactive wizard when provided |
+| `--repo` | string |  | Repository selector to attach: name, package name or path to a Flutter repo, may be outside `--scope` (repeatable). Required in non-interactive mode; bypasses interactive wizard when provided |
 | `--package-base` | string |  | Override package base branch as `<selector>=<branch>` (repeatable) |
 | `--copy-root-file` | string |  | Extra root-level file/pattern to copy into attached worktrees (repeatable). Default includes `.env` and `.env.*` |
 | `--non-interactive` | boolean | `false` | Disable interactive wizard/prompts and enforce deterministic execution |
@@ -225,13 +237,26 @@ Usage:
 ```
 flutree config set scope.root <path>
 flutree config get scope.root
+flutree config set workspace.generate false
+flutree config set sdk.manager fvm
 ```
+
+#### SDK setup
+
+After `create` and `add-repo` create worktrees, flutree prepares the Flutter SDK in the root and every package worktree so you do not have to run your SDK manager in each one:
+
+- **fvm**: reads `.fvmrc` (`"flutter"`) or the legacy `.fvm/fvm_config.json`, then runs `fvm use <version> --force --skip-pub-get`.
+- **puro**: reads `.puro.json` (`"env"`) — from the source repository too, since puro gitignores it — then runs `puro use <env>`.
+- `sdk.manager auto` (default) uses fvm when the repo pins an fvm version, otherwise puro. `fvm`/`puro` force one manager; `none` disables the step.
+- Repos without a pin are skipped. If the manager fails, the worktree is kept, a `[warning]` is printed on stderr and `sdk_setup` in `--json` output reports `failed` with the reason.
 
 Supported keys:
 
 | Key | Description |
 |-----|-------------|
 | `scope.root` | Default discovery root used by `create` and `add-repo` when `--scope` is omitted |
+| `workspace.generate` | `true`/`false` (default `true`): whether `create` writes the VSCode `.code-workspace` when neither `--workspace` nor `--no-workspace` is passed. Explicit flags always win. |
+| `sdk.manager` | `auto`/`fvm`/`puro`/`none` (default `auto`): Flutter SDK manager that `create` and `add-repo` run in every new worktree. See [SDK setup](#sdk-setup). |
 
 ### list
 
@@ -240,7 +265,7 @@ Use `--global` to force global registry scope from any location.
 
 Usage:
 ```
-flutree list [options]
+flutree list [flags]
 ```
 
 | Flag | Type | Default | Description |
@@ -255,7 +280,7 @@ If a recorded path is already missing, completion performs stale registry cleanu
 
 Usage:
 ```
-flutree complete <name> [options]
+flutree complete <name> [flags]
 ```
 
 | Flag | Type | Default | Description |
@@ -276,6 +301,19 @@ flutree pubget <name> [--force]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--force` | boolean | `false` | Clean cache and remove `pubspec.lock` before `pub get` |
+
+### completion
+
+Generate a shell completion script:
+
+```bash
+flutree completion bash > /etc/bash_completion.d/flutree
+flutree completion zsh > "${fpath[1]}/_flutree"
+flutree completion fish > ~/.config/fish/completions/flutree.fish
+flutree completion powershell | Out-String | Invoke-Expression
+```
+
+Run `flutree completion <shell> --help` for per-shell setup details.
 
 ## 🔄 Version and update
 
@@ -352,11 +390,14 @@ flutree ships a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP)
 ### Quickstart
 
 ```bash
-flutree mcp install   # auto-detect clients and write config
+flutree mcp install            # auto-detect clients and write config
+flutree mcp install --dry-run  # preview target files and entries, write nothing
+flutree mcp doctor             # verify binary, client entries and a live handshake
+flutree mcp uninstall          # remove only the flutree entry
 # restart your AI coding client
 ```
 
-That is all. The installer detects which clients are present, writes the entry non-destructively (existing entries are preserved unless `--force` is passed), and prints one line per client.
+The installer detects which clients are present, writes the entry non-destructively (existing keys, other servers and an existing flutree entry are preserved unless `--force` is passed), and prints one line per client.
 
 ### MCP tools
 
@@ -376,23 +417,34 @@ That is all. The installer detects which clients are present, writes the entry n
 
 | Flag | Description |
 |------|-------------|
-| `--client <names>` | Comma-separated list of clients to target: `claude-code`, `opencode`, `codex`. Omit to target all detected clients. |
+| `--client <names>` | Comma-separated clients to target: `claude-code`, `opencode`, `codex`, `cursor`, `vscode`, `gemini`, `claude-desktop`, `windsurf`. Omit to target all detected clients. |
+| `--scope user\|project` | `user` (default) writes the per-user config; `project` writes the config of the current directory. Clients without a project config report `unsupported_scope` (not an error). |
+| `--dry-run` | Print, per client, the target file and the exact entry it would write; writes nothing. Works with `--json`. |
 | `--force` | Overwrite an existing entry. For clients whose config contains JSONC/TOML comments, `--force` is also required to strip comments before merging (comments are not preserved on the round-trip). |
-| `--json` | Emit a JSON object keyed by client name with `status`, `config_path`, and `message` fields. |
+| `--json` | Emit a JSON object keyed by client name with `status`, `config_path`, `message`, and (dry-run) `entry` fields. |
+
+`flutree mcp uninstall [--client ...] [--scope ...] [--dry-run] [--json]` removes only the flutree entry and reports `removed`, `not_found` (client present, no flutree entry) or `not_installed`.
+
+`flutree mcp doctor [--scope ...] [--json]` reports the resolved binary (warning when it is a temp or `go run` path), per client whether it was detected, its config path, whether the flutree entry exists and whether its command is an existing executable, plus a live `mcp serve` initialize handshake (5s timeout). It prints `[OK]` / `[-]` (detected client with no flutree entry, informational) / `[WARN]` / `[ERR]` lines and exits 1 when a command path is broken or the handshake fails.
 
 ### Per-client config file locations
 
-| Client | Config file |
-|--------|-------------|
-| Claude Code | `~/.claude.json` → `mcpServers.flutree` |
-| OpenCode | `~/.config/opencode/opencode.json` → `mcp.flutree` |
-| Codex | `~/.codex/config.toml` → `[mcp_servers.flutree]` |
+| Client | User scope | Project scope | Key |
+|--------|-----------|---------------|-----|
+| Claude Code | `~/.claude.json` | `.mcp.json` | `mcpServers.flutree` |
+| OpenCode | `~/.config/opencode/opencode.json` | `opencode.json` | `mcp.servers.flutree` (V2, used for new files); an existing legacy `mcp.flutree` layout is kept, and uninstall/doctor read both |
+| Codex | `~/.codex/config.toml` | `.codex/config.toml` | `[mcp_servers.flutree]` |
+| Cursor | `~/.cursor/mcp.json` | `.cursor/mcp.json` | `mcpServers.flutree` |
+| VS Code (Copilot) | `<VS Code user dir>/User/mcp.json` | `.vscode/mcp.json` | `servers.flutree` |
+| Gemini CLI | `~/.gemini/settings.json` | `.gemini/settings.json` | `mcpServers.flutree` |
+| Claude Desktop | macOS `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows `%APPDATA%\Claude\claude_desktop_config.json`, Linux `~/.config/Claude/claude_desktop_config.json` | not supported | `mcpServers.flutree` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | not supported | `mcpServers.flutree` |
 
-Detection: each client is considered present when its binary is on `PATH` **or** its config directory/file already exists.
+Detection never runs network calls: each client is considered present when its binary is on `PATH` **or** its config directory/file already exists.
 
 ### Manual configuration (unsupported clients)
 
-For clients not yet handled by `mcp install`, add the following stdio entry manually:
+For clients `mcp install` does not handle, add the following stdio entry manually:
 
 ```json
 {
@@ -413,6 +465,8 @@ Replace `/path/to/flutree` with the output of `which flutree`. The server reads 
 - `0`: success
 - `1`: operational/precondition/process/git/update failure
 - `2`: input or user-cancelled flow
+
+With `--json`, the error envelope on stderr carries a `code` equal to the process exit code.
 
 ## 🗂️ Registry
 

@@ -19,16 +19,22 @@ import (
 	"github.com/creack/pty"
 )
 
+// buildCLI returns the flutree binary under test. It is compiled once per
+// test run and shared by every e2e test (see TestMain in e2e_helpers_test.go).
 func buildCLI(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "flutree")
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/flutree")
-	cmd.Dir = projectRoot(t)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
+	cliBuild.once.Do(func() {
+		cmd := exec.Command("go", "build", "-o", filepath.Join(cliBuild.dir, "flutree"), "./cmd/flutree")
+		cmd.Dir = projectRoot(t)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			cliBuild.err = err
+			cliBuild.out = string(out)
+		}
+	})
+	if cliBuild.err != nil {
+		t.Fatalf("build failed: %v\n%s", cliBuild.err, cliBuild.out)
 	}
-	return bin
+	return filepath.Join(cliBuild.dir, "flutree")
 }
 
 type runResult struct {
@@ -264,7 +270,7 @@ func TestCLIHelpListsExpectedCommands(t *testing.T) {
 			t.Errorf("help output missing command %q: %s", cmd, res.stdout)
 		}
 	}
-	if !strings.Contains(res.stdout, "flutree <subcommand> --help") {
+	if !strings.Contains(res.stdout, `Use "flutree [command] --help"`) {
 		t.Fatalf("expected subcommand help hint, got: %s", res.stdout)
 	}
 }
@@ -289,42 +295,42 @@ func TestSubcommandHelpContracts(t *testing.T) {
 		{
 			name:     "create long help",
 			args:     []string{"create", "--help"},
-			contains: []string{"flutree create <name> [options]", "--branch", "--root-repo", "--no-package", "--package", "--package-base", "--copy-root-file"},
+			contains: []string{"flutree create <name> [flags]", "--branch", "--root-repo", "--no-package", "--package", "--package-base", "--copy-root-file"},
 		},
 		{
 			name:     "create short help",
 			args:     []string{"create", "-h"},
-			contains: []string{"flutree create <name> [options]", "--branch", "--root-repo", "--no-package", "--package"},
+			contains: []string{"flutree create <name> [flags]", "--branch", "--root-repo", "--no-package", "--package"},
 		},
 		{
 			name:     "add-repo help",
 			args:     []string{"add-repo", "--help"},
-			contains: []string{"flutree add-repo <workspace> [options]", "--repo", "--package-base", "--package-branch-source", "--sync-policy", "--reuse-existing-branch", "--copy-root-file"},
+			contains: []string{"flutree add-repo <workspace> [flags]", "--repo", "--package-base", "--package-branch-source", "--sync-policy", "--reuse-existing-branch", "--copy-root-file"},
 		},
 		{
 			name:     "complete help",
 			args:     []string{"complete", "--help"},
-			contains: []string{"flutree complete <name> [options]", "--yes", "--force"},
+			contains: []string{"flutree complete <name> [flags]", "--yes", "--force"},
 		},
 		{
 			name:     "pubget help",
 			args:     []string{"pubget", "--help"},
-			contains: []string{"flutree pubget <name> [options]", "--force"},
+			contains: []string{"flutree pubget <name> [flags]", "--force"},
 		},
 		{
 			name:     "clean help",
 			args:     []string{"clean", "--help"},
-			contains: []string{"flutree clean [options]", "--force"},
+			contains: []string{"flutree clean [flags]", "--force"},
 		},
 		{
 			name:     "list help",
 			args:     []string{"list", "--help"},
-			contains: []string{"flutree list [options]", "--all", "--global"},
+			contains: []string{"flutree list [flags]", "--all", "--global"},
 		},
 		{
 			name:     "update help",
 			args:     []string{"update", "--help"},
-			contains: []string{"flutree update [options]", "--check", "--apply"},
+			contains: []string{"flutree update [flags]", "--check", "--apply"},
 		},
 		{
 			name:     "version help",
@@ -597,7 +603,7 @@ func TestUnknownCommandExitsNonZero(t *testing.T) {
 	if res.code == 0 {
 		t.Fatalf("expected non-zero exit")
 	}
-	if !strings.Contains(res.stderr, "No such command") {
+	if res.code != 2 || !strings.Contains(res.stderr, `unknown command "unknown-command" for "flutree"`) {
 		t.Fatalf("unexpected stderr: %s", res.stderr)
 	}
 }
@@ -713,12 +719,11 @@ func TestCreateNoPackageCreatesRootOnlyArtifacts(t *testing.T) {
 	}
 
 	overridePath := filepath.Join(home, "Documents", "worktrees", "feature-login", "root", "root-app", "pubspec_overrides.yaml")
-	content, err := os.ReadFile(overridePath)
-	if err != nil {
-		t.Fatalf("failed to read override file: %v", err)
+	if _, err := os.Stat(overridePath); !os.IsNotExist(err) {
+		t.Fatalf("expected no pubspec_overrides.yaml in no-package mode, stat err: %v", err)
 	}
-	if !strings.Contains(string(content), "dependency_overrides:\n  {}") {
-		t.Fatalf("expected empty override map in no-package mode, got: %s", string(content))
+	if strings.Contains(create.stdout, "pubspec_overrides.yaml") {
+		t.Fatalf("dry plan must not list an override file in no-package mode:\n%s", create.stdout)
 	}
 
 	pkgPath := filepath.Join(home, "Documents", "worktrees", "feature-login", "packages")
@@ -1780,7 +1785,7 @@ func TestMCPServeRespondsToInitialize(t *testing.T) {
 
 // TestMCPServeToolsListContainsAll9Tools verifies that a tools/list request
 // returns exactly the 9 advertised tool names.
-func TestMCPServeToolsListContainsAll9Tools(t *testing.T) {
+func TestMCPServeToolsListContainsAllTools(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping MCP serve integration test in short mode")
 	}
@@ -1832,6 +1837,8 @@ func TestMCPServeToolsListContainsAll9Tools(t *testing.T) {
 		"list_worktrees", "create_worktree", "add_repo",
 		"complete_worktree", "pubget", "clean_worktree",
 		"get_config", "set_config", "get_version",
+		"discover_repos", "inspect_repo", "list_branches",
+		"plan_create", "create_workspace", "workspace_status",
 	}
 	if len(tools) != len(wantTools) {
 		t.Fatalf("expected %d tools, got %d: %v", len(wantTools), len(tools), tools)

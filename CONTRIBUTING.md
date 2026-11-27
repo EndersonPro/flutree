@@ -23,6 +23,7 @@ Thank you for your interest in contributing to `flutree`! All contributions are 
 3. Navigate to the project directory: `cd flutree`
 4. Install dependencies: `go mod download`
 5. Build the project: `go build -o flutree ./cmd/flutree`
+6. Enable the versioned Git hooks: `git config core.hooksPath .githooks`
 
 ## Project Structure
 
@@ -35,7 +36,7 @@ internal/
   runtime/           # Runtime utilities
   ui/                # User interface components (using Bubble Tea)
 docs/                # Documentation
-integration/         # Integration tests
+integration/         # End-to-end CLI tests (build and run the real binary)
 scripts/             # Build and release scripts
 ```
 
@@ -43,26 +44,27 @@ scripts/             # Build and release scripts
 
 ### Running Tests
 ```bash
-# Run all tests
+# End-to-end CLI suite (the pre-push gate)
+./scripts/e2e.sh
+
+# Everything, including the remaining unit tests
 go test ./...
-
-# Run tests with coverage
-go test ./... -cover
-
-# Run tests with verbose output
-go test -v ./...
 ```
 
+### Pre-push hook
+`.githooks/pre-push` runs `scripts/e2e.sh` on every `git push` and aborts the push when it fails.
+Enable it once per clone with `git config core.hooksPath .githooks`. Skip it only in an emergency with `git push --no-verify`.
+
 ### Writing Tests
-- Place unit tests alongside the code they test (e.g., `create_service_test.go` for `create_service.go`)
-- Use table-driven tests where appropriate
-- Maintain high test coverage, especially for critical business logic
-- Write integration tests for complex workflows in the `integration/` directory
+- **End-to-end first.** New behavior is covered by tests in `integration/` that build the `flutree` binary and run it the way a user does, asserting stdout, stderr, exit code and the files or Git state it leaves behind.
+- Write a unit test only when an end-to-end test cannot reach the behavior (for example, a race, a rare error branch, or a pure parsing helper).
+- Use the helpers in `integration/e2e_helpers_test.go`: `runE2E` (separate stdout/stderr), `createWorkspace` (real `flutree create`), and `newFakeToolchain` (stub `flutter`/`dart` that record each call).
+- Keep every test hermetic: point `HOME` at `t.TempDir()` and never touch real repositories or user config.
 
 ## Pull Requests
 
 ### Before Submitting
-- Ensure all tests pass
+- Ensure all tests pass (`./scripts/e2e.sh` runs automatically on push)
 - Update documentation as needed
 - Add tests for new features
 - Follow the style guides below

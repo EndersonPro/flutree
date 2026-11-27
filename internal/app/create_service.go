@@ -15,9 +15,17 @@ type CreateService struct {
 	git      GitPort
 	registry RegistryPort
 	prompt   PromptPort
+	sdk      SDKPort
+	sdkPref  func() (domain.SDKManager, error)
 }
 
-const overrideFileName = "pubspec_overrides.yaml"
+// WithSDK enables SDK manager setup (fvm/puro) for created worktrees.
+// preference is read on every run so a changed sdk.manager applies at once.
+func (s *CreateService) WithSDK(sdk SDKPort, preference func() (domain.SDKManager, error)) *CreateService {
+	s.sdk = sdk
+	s.sdkPref = preference
+	return s
+}
 
 func NewCreateService(git GitPort, registry RegistryPort, prompt PromptPort) *CreateService {
 	return &CreateService{git: git, registry: registry, prompt: prompt}
@@ -32,19 +40,33 @@ func (s *CreateService) BuildDryPlan(input domain.CreateInput) (domain.CreateDry
 	rootBranch := normalizeBranchName(rootBranchInput)
 	baseBranch := normalizeBranchName(input.BaseBranch)
 
-	repos, err := s.git.DiscoverFlutterRepos(input.ExecutionScope)
-	if err != nil {
-		return domain.CreateDryPlan{}, err
+	// An explicit candidate set (chosen in the wizard) replaces discovery.
+	repos := dedupRepos(input.Repos)
+	var discoverErr error
+	if len(repos) == 0 {
+		repos, discoverErr = s.git.DiscoverFlutterRepos(input.ExecutionScope)
+		if discoverErr != nil {
+			repos = nil
+		}
 	}
+	// A selector that is a path to a Flutter repo outside the scope joins the
+	// candidates; selectors are rewritten to the repo's absolute path.
+	selectors := append([]string{input.RootSelector}, input.PackageSelectors...)
+	repos, selectors, extra := withPathRepos(s.git, repos, selectors)
+	if discoverErr != nil && extra == 0 {
+		return domain.CreateDryPlan{}, discoverErr
+	}
+	rootSelector, packageSelectors := selectors[0], selectors[1:]
+	packageBase := normalizeAssignmentKeys(s.git, repos, input.PackageBaseBranch)
 
-	rootRepo, err := s.resolveRootRepo(repos, input.RootSelector, input.NonInteractive)
+	rootRepo, err := s.resolveRootRepo(repos, rootSelector, input.NonInteractive)
 	if err != nil {
 		return domain.CreateDryPlan{}, err
 	}
 
 	packages := []domain.DiscoveredFlutterRepo{}
 	if !input.NoPackage {
-		packages, err = s.resolvePackageRepos(repos, rootRepo, input.PackageSelectors, input.NonInteractive)
+		packages, err = s.resolvePackageRepos(repos, rootRepo, packageSelectors, input.NonInteractive)
 		if err != nil {
 			return domain.CreateDryPlan{}, err
 		}
@@ -71,9 +93,9 @@ func (s *CreateService) BuildDryPlan(input domain.CreateInput) (domain.CreateDry
 	packagePlans := make([]domain.PlannedWorktree, 0, len(packages))
 	for _, pkg := range packages {
 		branch := rootBranch
-		pkgBase, ok := input.PackageBaseBranch[pkg.Name]
+		pkgBase, ok := packageBase[pkg.Name]
 		if !ok {
-			pkgBase, ok = input.PackageBaseBranch[pkg.RepoRoot]
+			pkgBase, ok = packageBase[pkg.RepoRoot]
 		}
 		if !ok {
 			pkgBase, err = s.prompt.AskText(
@@ -95,8 +117,29 @@ func (s *CreateService) BuildDryPlan(input domain.CreateInput) (domain.CreateDry
 	}
 	sort.Slice(packagePlans, func(i, j int) bool { return packagePlans[i].Repo.Name < packagePlans[j].Repo.Name })
 
-	overridePath := filepath.Join(rootPlan.Path, overrideFileName)
-	overrideContent := buildOverrideContent(rootPlan, packagePlans)
+	// Fail before any side effect when a package base branch is missing.
+	for _, plan := range packagePlans {
+		ok, err := s.git.BaseBranchExists(plan.Repo.RepoRoot, plan.BaseBranch)
+		if err != nil {
+			return domain.CreateDryPlan{}, err
+		}
+		if !ok {
+			return domain.CreateDryPlan{}, domain.NewError(
+				domain.CategoryInput, 2,
+				"Base branch '"+plan.BaseBranch+"' does not exist in "+plan.Repo.Name+".",
+				"Pass --package-base "+plan.Repo.Name+"=<branch>.",
+				nil,
+			)
+		}
+	}
+
+	// Without packages there is nothing to override: the root pubspec's own
+	// dependency_overrides already apply, so no pubspec_overrides.yaml is written.
+	overridePath, overrideContent := "", ""
+	if len(packagePlans) > 0 {
+		overridePath = filepath.Join(rootPlan.Path, overrideFileName)
+		overrideContent = buildOverrideContent(rootPlan, packagePlans)
+	}
 
 	workspacePath := ""
 	workspaceFolders := []string{}
@@ -136,51 +179,78 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 
 	created := []domain.PlannedWorktree{}
 	persisted := []string{}
+	// Branches this run created; a branch that already existed is never listed.
+	type branchRef struct{ repoRoot, branch string }
+	createdBranches := []branchRef{}
+	// Only a container this run creates is removed on failure; one that
+	// already existed holds someone else's work.
+	_, statErr := os.Stat(plan.ContainerPath)
+	containerPreExisted := statErr == nil
 	rollback := func() {
+		defer func() {
+			if !containerPreExisted && plan.ContainerPath != "" {
+				_ = os.RemoveAll(plan.ContainerPath)
+			}
+		}()
 		for i := len(persisted) - 1; i >= 0; i-- {
 			_, _ = s.registry.Remove(persisted[i])
 		}
 		for i := len(created) - 1; i >= 0; i-- {
 			_ = s.git.RemoveWorktree(created[i].Repo.RepoRoot, created[i].Path, true)
 		}
+		// Branches go after their worktrees: git refuses a checked-out branch.
+		for i := len(createdBranches) - 1; i >= 0; i-- {
+			_ = s.git.DeleteBranch(createdBranches[i].repoRoot, createdBranches[i].branch)
+		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(plan.Root.Path), 0o755); err != nil {
+		rollback()
 		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to create root worktree directory.", plan.Root.Path, err)
 	}
-	if err := s.createPlannedWorktree(plan.Root, options); err != nil {
+	madeBranch, err := s.createPlannedWorktree(plan.Root, options)
+	if madeBranch {
+		createdBranches = append(createdBranches, branchRef{plan.Root.Repo.RepoRoot, plan.Root.Branch})
+	}
+	if err != nil {
+		rollback()
 		return domain.CreateResult{}, err
 	}
+	created = append(created, plan.Root)
 	if err := copyRootFiles(plan.Root.Repo.RepoRoot, plan.Root.Path, plan.RootFiles); err != nil {
 		rollback()
 		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to copy root files into root worktree.", plan.Root.Path, err)
 	}
-	created = append(created, plan.Root)
 
 	for _, pkg := range plan.Packages {
 		if err := os.MkdirAll(filepath.Dir(pkg.Path), 0o755); err != nil {
 			rollback()
 			return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to create package worktree directory.", pkg.Path, err)
 		}
-		if err := s.createPlannedWorktree(pkg, options); err != nil {
+		madeBranch, err := s.createPlannedWorktree(pkg, options)
+		if madeBranch {
+			createdBranches = append(createdBranches, branchRef{pkg.Repo.RepoRoot, pkg.Branch})
+		}
+		if err != nil {
 			rollback()
 			return domain.CreateResult{}, err
 		}
+		created = append(created, pkg)
 		if err := copyRootFiles(pkg.Repo.RepoRoot, pkg.Path, plan.RootFiles); err != nil {
 			rollback()
 			return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to copy root files into package worktree.", pkg.Path, err)
 		}
-		created = append(created, pkg)
 	}
 
-	if err := writeOverrideFile(plan.OverridePath, plan.Root.Path, plan.Packages); err != nil {
-		rollback()
-		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to write pubspec_overrides.yaml.", plan.OverridePath, err)
-	}
-
-	if err := ensureGitignoreContains(plan.Root.Path, filepath.Base(plan.OverridePath)); err != nil {
-		rollback()
-		return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to update .gitignore for pubspec_overrides.yaml.", filepath.Join(plan.Root.Path, ".gitignore"), err)
+	if plan.OverridePath != "" {
+		if err := writeOverrideFile(plan.OverridePath, plan.Root.Path, plan.Root.Repo.RepoRoot, plan.Packages); err != nil {
+			rollback()
+			return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to write pubspec_overrides.yaml.", err.Error(), err)
+		}
+		if err := s.git.EnsureLocalExclude(plan.Root.Path, overrideExcludePattern); err != nil {
+			rollback()
+			return domain.CreateResult{}, domain.NewError(domain.CategoryPersistence, 5, "Failed to ignore pubspec_overrides.yaml in .git/info/exclude.", err.Error(), err)
+		}
 	}
 
 	if plan.WorkspacePath != "" {
@@ -191,11 +261,12 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 	}
 
 	rootRecord := domain.RegistryRecord{
-		Name:     plan.NormalizedName,
-		Branch:   plan.Root.Branch,
-		Path:     plan.Root.Path,
-		RepoRoot: plan.Root.Repo.RepoRoot,
-		Status:   "active",
+		Name:       plan.NormalizedName,
+		Branch:     plan.Root.Branch,
+		Path:       plan.Root.Path,
+		RepoRoot:   plan.Root.Repo.RepoRoot,
+		Status:     "active",
+		BaseBranch: plan.Root.BaseBranch,
 	}
 	if err := s.registry.Upsert(rootRecord); err != nil {
 		rollback()
@@ -205,11 +276,12 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 
 	for _, pkg := range plan.Packages {
 		record := domain.RegistryRecord{
-			Name:     fmt.Sprintf("%s__pkg__%s", plan.NormalizedName, pkg.Repo.Name),
-			Branch:   pkg.Branch,
-			Path:     pkg.Path,
-			RepoRoot: pkg.Repo.RepoRoot,
-			Status:   "active",
+			Name:       fmt.Sprintf("%s__pkg__%s", plan.NormalizedName, pkg.Repo.Name),
+			Branch:     pkg.Branch,
+			Path:       pkg.Path,
+			RepoRoot:   pkg.Repo.RepoRoot,
+			Status:     "active",
+			BaseBranch: pkg.BaseBranch,
 		}
 		if err := s.registry.Upsert(record); err != nil {
 			rollback()
@@ -219,27 +291,33 @@ func (s *CreateService) Apply(plan domain.CreateDryPlan, options domain.CreateAp
 	}
 
 	selected := make([]string, 0, len(plan.Packages))
+	targets := []sdkTarget{{repo: plan.Root.Repo.Name, path: plan.Root.Path, sourceRoot: plan.Root.Repo.RepoRoot}}
 	for _, pkg := range plan.Packages {
 		selected = append(selected, pkg.Repo.PackageName)
+		targets = append(targets, sdkTarget{repo: pkg.Repo.Name, path: pkg.Path, sourceRoot: pkg.Repo.RepoRoot})
 	}
 	return domain.CreateResult{
 		Record:           rootRecord,
 		NextStep:         "cd " + plan.Root.Path,
 		SelectedPackages: selected,
 		WorkspacePath:    plan.WorkspacePath,
+		SDKSetup:         setupSDKs(s.sdk, s.sdkPref, targets),
 	}, nil
 }
 
-func (s *CreateService) createPlannedWorktree(target domain.PlannedWorktree, options domain.CreateApplyOptions) error {
+// createPlannedWorktree creates the worktree for target. The boolean reports
+// that this call created the local branch (so a rollback may delete it); it is
+// true even when a later step of the call failed.
+func (s *CreateService) createPlannedWorktree(target domain.PlannedWorktree, options domain.CreateApplyOptions) (bool, error) {
 	exists, err := s.git.BranchExists(target.Repo.RepoRoot, target.Branch)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if exists {
 		if options.NonInteractive {
 			if !options.ReuseExistingBranch {
-				return domain.NewError(
+				return false, domain.NewError(
 					domain.CategoryInput,
 					2,
 					"Existing branch reuse requires explicit --reuse-existing-branch in non-interactive mode.",
@@ -251,10 +329,10 @@ func (s *CreateService) createPlannedWorktree(target domain.PlannedWorktree, opt
 			confirmMessage := "Branch '" + target.Branch + "' already exists for repo '" + target.Repo.Name + "'. Reuse it for this worktree?"
 			confirmed, confirmErr := s.prompt.Confirm(confirmMessage, false, false)
 			if confirmErr != nil {
-				return confirmErr
+				return false, confirmErr
 			}
 			if !confirmed {
-				return domain.NewError(
+				return false, domain.NewError(
 					domain.CategoryInput,
 					2,
 					"Create cancelled by user while confirming branch reuse.",
@@ -266,32 +344,30 @@ func (s *CreateService) createPlannedWorktree(target domain.PlannedWorktree, opt
 
 		if options.SyncWithRemote {
 			if err := s.git.SyncBranchWithRemote(target.Repo.RepoRoot, target.Branch); err != nil {
-				return err
+				return false, err
 			}
 		}
 
-		if err := s.git.CreateWorktreeExisting(target.Repo.RepoRoot, target.Path, target.Branch); err != nil {
-			return err
-		}
-		return nil
+		return false, s.git.CreateWorktreeExisting(target.Repo.RepoRoot, target.Path, target.Branch)
 	}
 
 	// Branch doesn't exist locally — check if it exists on origin
 	if options.SyncWithRemote {
 		remoteExists, err := s.git.RemoteBranchExists(target.Repo.RepoRoot, target.Branch)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if remoteExists {
-			// Fetch and set up local branch from remote
+			// Fetch and set up local branch from remote. The branch did not
+			// exist locally before, so if sync created it and then failed it
+			// is still ours to delete on rollback.
 			if err := s.git.SyncBranchWithRemote(target.Repo.RepoRoot, target.Branch); err != nil {
-				return err
+				created, _ := s.git.BranchExists(target.Repo.RepoRoot, target.Branch)
+				return created, err
 			}
-			// Create worktree from the now-existing local branch
-			if err := s.git.CreateWorktreeExisting(target.Repo.RepoRoot, target.Path, target.Branch); err != nil {
-				return err
-			}
-			return nil
+			// Create worktree from the now-existing local branch; the local
+			// branch is ours from here on.
+			return true, s.git.CreateWorktreeExisting(target.Repo.RepoRoot, target.Path, target.Branch)
 		}
 	}
 
@@ -299,13 +375,13 @@ func (s *CreateService) createPlannedWorktree(target domain.PlannedWorktree, opt
 	if options.SyncWithRemote {
 		startPoint, err = s.git.SyncBaseBranch(target.Repo.RepoRoot, target.BaseBranch)
 		if err != nil {
-			return err
+			return false, err
 		}
 	}
 	if err := s.git.CreateWorktreeNew(target.Repo.RepoRoot, target.Path, target.Branch, startPoint); err != nil {
-		return err
+		return false, err
 	}
-	return nil
+	return true, nil
 }
 
 func (s *CreateService) resolveRootRepo(repos []domain.DiscoveredFlutterRepo, selector string, nonInteractive bool) (domain.DiscoveredFlutterRepo, error) {
@@ -407,178 +483,6 @@ func repoLabel(repo domain.DiscoveredFlutterRepo) string {
 	return fmt.Sprintf("%s [%s] (%s)", repo.Name, repo.PackageName, repo.RepoRoot)
 }
 
-func buildOverrideContent(root domain.PlannedWorktree, packages []domain.PlannedWorktree) string {
-	entries := buildOverrideEntriesMap(root, packages, nil)
-	return formatOverrideYAML(entries)
-}
-
-// OverrideEntry represents a single dependency_override entry.
-type OverrideEntry struct {
-	PackageName  string
-	RelativePath string
-}
-
-// buildOverrideEntriesMap merges new packages with existing entries.
-// existingEntries may be nil. When package name collides, new wins.
-func buildOverrideEntriesMap(root domain.PlannedWorktree, packages []domain.PlannedWorktree, existingEntries map[string]string) map[string]string {
-	entries := make(map[string]string)
-	// Seed with existing entries first (will be overwritten by new if duplicate).
-	for pkg, relPath := range existingEntries {
-		entries[pkg] = relPath
-	}
-	// Add new packages (overwrites any existing with same package name).
-	for _, pkg := range packages {
-		rel, err := filepath.Rel(root.Path, pkg.Path)
-		if err != nil {
-			rel = pkg.Path
-		}
-		entries[pkg.Repo.PackageName] = filepath.ToSlash(rel)
-	}
-	return entries
-}
-
-// Merge existing overrides from pubspec.yaml into the overrides map.
-// Returns the updated entries map with pubspec overrides included.
-// Pubspec overrides are only moved if not already present in entries (new wins on conflict).
-// Only path-based overrides are migrated; git/version-based overrides are skipped.
-func mergePubspecOverrides(entries map[string]string, pubspecPath string) map[string]string {
-	content, err := os.ReadFile(pubspecPath)
-	if err != nil {
-		return entries
-	}
-	parsing := false
-	var currentPkg string
-	for _, rawLine := range strings.Split(string(content), "\n") {
-		// Strip Windows-style line endings before any processing.
-		rawLine = strings.TrimRight(rawLine, "\r")
-		line := strings.TrimSpace(rawLine)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if strings.HasPrefix(line, "dependency_overrides:") {
-			parsing = true
-			currentPkg = ""
-			continue
-		}
-		if !parsing {
-			continue
-		}
-		// Determine indentation from the raw line (before trimming).
-		indent := len(rawLine) - len(strings.TrimLeft(rawLine, " \t"))
-		// A non-empty, non-comment, zero-indented line after the section begins
-		// means we've reached the next top-level key — stop parsing.
-		if indent == 0 {
-			break
-		}
-		// Package names appear at indent 2 (one level of 2-space indentation).
-		// Their sub-keys (path:, git:, …) appear at indent 4 or deeper.
-		if indent == 2 && strings.HasSuffix(line, ":") {
-			currentPkg = strings.TrimSuffix(line, ":")
-			continue
-		}
-		if indent >= 4 && currentPkg != "" {
-			if strings.HasPrefix(line, "path:") {
-				relPath := strings.TrimSpace(strings.TrimPrefix(line, "path:"))
-				relPath = strings.Trim(relPath, "\"'")
-				if relPath != "" {
-					if _, exists := entries[currentPkg]; !exists {
-						entries[currentPkg] = relPath
-					}
-				}
-				currentPkg = ""
-			} else if indent == 4 {
-				// A different sub-key at depth 4 (e.g. git:) — not a path override; skip pkg.
-				currentPkg = ""
-			}
-		}
-	}
-	return entries
-}
-
-// readExistingOverrides reads the current pubspec_overrides.yaml and returns
-// a map of package name -> relative path. Returns nil if file doesn't exist.
-// The file format is produced by formatOverrideYAML: package names at 2-space
-// indent, path values at 4-space indent.
-func readExistingOverrides(overridePath string) map[string]string {
-	content, err := os.ReadFile(overridePath)
-	if err != nil {
-		return nil
-	}
-	entries := make(map[string]string)
-	var currentPkg string
-	for _, rawLine := range strings.Split(string(content), "\n") {
-		// Strip Windows-style line endings before any processing.
-		rawLine = strings.TrimRight(rawLine, "\r")
-		line := strings.TrimSpace(rawLine)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if line == "dependency_overrides:" || line == "{}" {
-			continue
-		}
-		// Determine indentation from the raw line (before trimming).
-		indent := len(rawLine) - len(strings.TrimLeft(rawLine, " \t"))
-		// Package names at indent 2 (format: "  pkg_name:").
-		if indent == 2 && strings.HasSuffix(line, ":") {
-			currentPkg = strings.TrimSuffix(line, ":")
-			continue
-		}
-		// Path values at indent 4 (format: "    path: ../value").
-		if indent == 4 && currentPkg != "" && strings.HasPrefix(line, "path:") {
-			pathVal := strings.TrimSpace(strings.TrimPrefix(line, "path:"))
-			pathVal = strings.Trim(pathVal, "\"'")
-			if pathVal != "" {
-				entries[currentPkg] = pathVal
-			}
-			currentPkg = ""
-		}
-	}
-	return entries
-}
-
-// writeOverrideFile reads existing overrides, merges pubspec.yaml overrides,
-// adds new packages, and writes the merged result. Skips write if content unchanged.
-func writeOverrideFile(overridePath, rootPath string, newPackages []domain.PlannedWorktree) error {
-	pubspecPath := filepath.Join(rootPath, "pubspec.yaml")
-	entries := readExistingOverrides(overridePath)
-	if entries == nil {
-		entries = make(map[string]string)
-	}
-	entries = mergePubspecOverrides(entries, pubspecPath)
-	for _, pkg := range newPackages {
-		rel, err := filepath.Rel(rootPath, pkg.Path)
-		if err != nil {
-			rel = pkg.Path
-		}
-		entries[pkg.Repo.PackageName] = filepath.ToSlash(rel)
-	}
-	newContent := formatOverrideYAML(entries)
-	existingContent, err := os.ReadFile(overridePath)
-	if err == nil && string(existingContent) == newContent {
-		return nil
-	}
-	return os.WriteFile(overridePath, []byte(newContent), 0o644)
-}
-
-// formatOverrideYAML generates the YAML content from entries map,
-// sorted alphabetically for deterministic output.
-func formatOverrideYAML(entries map[string]string) string {
-	if len(entries) == 0 {
-		return "dependency_overrides:\n  {}\n"
-	}
-	var sorted []string
-	for pkg := range entries {
-		sorted = append(sorted, pkg)
-	}
-	sort.Strings(sorted)
-	lines := []string{"dependency_overrides:"}
-	for _, pkg := range sorted {
-		lines = append(lines, "  "+pkg+":")
-		lines = append(lines, "    path: "+entries[pkg])
-	}
-	return strings.Join(lines, "\n") + "\n"
-}
-
 func buildWorkspaceFolders(root domain.PlannedWorktree, packages []domain.PlannedWorktree, container string) []string {
 	folders := []string{workspaceFolderPath(container, root.Path)}
 	for _, pkg := range packages {
@@ -635,25 +539,70 @@ func writeWorkspace(path string, folders []string) error {
 	return nil
 }
 
-func ensureGitignoreContains(repoPath, entry string) error {
-	gitignorePath := filepath.Join(repoPath, ".gitignore")
+// looksLikePath tells a path selector (./x, ../x, /x, ~/x, a/b) from a repo name.
+func looksLikePath(selector string) bool {
+	sel := strings.TrimSpace(selector)
+	return strings.HasPrefix(sel, "~") || strings.HasPrefix(sel, ".") || strings.ContainsRune(sel, filepath.Separator)
+}
 
-	content := ""
-	if b, err := os.ReadFile(gitignorePath); err == nil {
-		content = string(b)
-		for _, line := range strings.Split(content, "\n") {
-			if strings.TrimSpace(line) == entry {
-				return nil
+// resolvePathSelector expands "~" and makes the path absolute (relative paths
+// resolve from the current directory).
+func resolvePathSelector(selector string) string {
+	sel := strings.TrimSpace(selector)
+	if sel == "~" || strings.HasPrefix(sel, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			sel = filepath.Join(home, strings.TrimPrefix(sel, "~"))
+		}
+	}
+	return domain.NormalizePath(sel)
+}
+
+// withPathRepos adds to repos every selector that is a path to a Flutter repo
+// not already known (for example one outside the discovery scope). Matching
+// selectors are rewritten to the repo's absolute path so the usual selector
+// matching applies; it returns how many repos were added.
+func withPathRepos(git GitPort, repos []domain.DiscoveredFlutterRepo, selectors []string) ([]domain.DiscoveredFlutterRepo, []string, int) {
+	out := append([]string(nil), selectors...)
+	added := 0
+	for i, selector := range out {
+		if strings.TrimSpace(selector) == "" || !looksLikePath(selector) {
+			continue
+		}
+		if _, ok := findRepoBySelector(repos, selector); ok {
+			continue
+		}
+		repo, ok, err := git.InspectFlutterRepo(resolvePathSelector(selector))
+		if err != nil || !ok {
+			continue
+		}
+		out[i] = repo.RepoRoot
+		if _, known := findRepoBySelector(repos, repo.RepoRoot); !known {
+			repos = append(repos, repo)
+			added++
+		}
+	}
+	return repos, out, added
+}
+
+// normalizeAssignmentKeys rewrites the path-selector keys of a per-package map
+// (--package-base, --package-branch-source) to the repo's absolute root, the
+// same identity withPathRepos gives to package selectors, so "../pkg-a=main"
+// and "~/code/pkg-a=main" match the repo they name. Name keys stay as they are.
+func normalizeAssignmentKeys(git GitPort, repos []domain.DiscoveredFlutterRepo, values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return values
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		if looksLikePath(key) {
+			resolved := resolvePathSelector(key)
+			if repo, ok := findRepoBySelector(repos, resolved); ok {
+				key = repo.RepoRoot
+			} else if repo, ok, err := git.InspectFlutterRepo(resolved); err == nil && ok {
+				key = repo.RepoRoot
 			}
 		}
-	} else if !os.IsNotExist(err) {
-		return err
+		out[key] = value
 	}
-
-	if content != "" && !strings.HasSuffix(content, "\n") {
-		content += "\n"
-	}
-	content += entry + "\n"
-
-	return os.WriteFile(gitignorePath, []byte(content), 0o644)
+	return out
 }

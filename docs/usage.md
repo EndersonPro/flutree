@@ -87,14 +87,28 @@ Options:
 - `--base-branch TEXT`: source branch for root worktree creation (default: `main`).
 - `--scope PATH`: execution directory scope used to discover Flutter repositories (default: current directory).
   - if omitted, `create` uses persisted `scope.root` when configured.
-- `--root-repo TEXT`: explicit root repository selector for non-interactive usage.
+- `--root-repo TEXT`: explicit root repository selector for non-interactive usage. Accepts a repository name, package name, or a path (absolute, `~`, or relative to the current directory) to a Flutter repository, even outside `--scope`.
 - `--no-package`: explicit root-only mode; skip package selection and package metadata prompts.
-- `--package, -p TEXT`: explicit package repository selector (repeatable).
-- `--package-base TEXT`: per-package base branch override in `<selector>=<branch>` format (repeatable, default `develop`).
+- `--package, -p TEXT`: explicit package repository selector (repeatable); accepts the same name or path forms as `--root-repo`.
+- `--package-base TEXT`: per-package base branch override in `<selector>=<branch>` format (repeatable, default `develop`). Every package base branch must exist locally or on `origin`; otherwise `create` fails before changing anything with `Base branch '<b>' does not exist in <repo>.` (hint `Pass --package-base <repo>=<branch>.`, exit code 2).
 - `--workspace/--no-workspace`: enable or disable VSCode `.code-workspace` generation (enabled by default).
 - `--yes`: acknowledge dry plan automatically only when `--non-interactive` is enabled.
 - `--non-interactive`: disable prompts; requires explicit `--yes` and `--root-repo`.
 - `--reuse-existing-branch`: allow reusing existing local branches without interactive prompt (required in non-interactive mode when target branch already exists).
+
+Interactive scope navigator:
+- If the resolved scope (`--scope` > `scope.root` > current directory) has no Flutter repositories, the wizard opens a folder navigator instead of failing. On the root step, `ctrl+o` opens it at any time to change folder.
+- Navigator keys: `Up`/`Down` (or `j`/`k`) move, `Enter` opens the highlighted folder (`..` goes up), `Tab` selects the current folder as scope, `Esc` goes up one folder (and, at the folder the navigator opened at, goes back or cancels when there is no previous scope). Folders that are Flutter repositories are marked `[flutter]`.
+- Pressing `Tab` on a folder that is itself a Flutter repository selects it directly as the root (the root list is skipped) and offers the repositories of its parent folder as packages.
+- On the packages step, `ctrl+o` opens the navigator in "add packages" mode: `Tab` on a Flutter repository adds it selected, `Tab` on any other folder adds the repositories found under it (unselected); then the wizard returns to the packages step. `Esc` returns without changes. Repeat to gather packages from unrelated folders.
+- Discovery runs in the background and shows `Scanning <dir>…` until results arrive.
+- Key hints wrap at narrow widths and long paths are shortened from the left with `…`.
+- A package base branch that does not exist is reported on the branches step and the wizard does not proceed.
+- A failed `create` deletes the branches it created in that run (never branches that already existed).
+- Selecting a folder discovers its repositories; if none are found the navigator stays open and shows `No Flutter repositories found in <dir>.`.
+- The root and package steps filter as you type (case-insensitive over repository name, package name and path); `Backspace` edits the filter, `Esc` clears it. Package selections made before filtering are kept.
+- When the scope was chosen in the navigator and differs from `scope.root`, the review step shows `Save <dir> as default scope (scope.root)` (on by default, `s` toggles it). It is persisted only after a successful apply.
+- Non-interactive mode and explicit flags are unchanged.
 
 Two-phase flow:
 - phase 1: dry-plan preview prints selected root/packages, branches, commands, and file outputs.
@@ -118,7 +132,9 @@ Generated worktrees are grouped into:
 - packages: `~/Documents/worktrees/<worktree-name-slug>/packages/<package-repo-folder>/`
 
 Package override output:
-- `flutree create` writes exactly one `pubspec_overrides.yaml` in the selected root worktree.
+- `flutree create` writes exactly one `pubspec_overrides.yaml` in the selected root worktree when at least one package is selected; root-only workspaces (`--no-package`) get no override file.
+  - It keeps every `dependency_overrides` entry already declared in the root `pubspec.yaml` (version, `path`, `git`, `hosted`), because a `pubspec_overrides.yaml` replaces those instead of merging with them. Relative paths that point outside the repository are rebased so they still resolve from the worktree; selected package worktrees win on conflict.
+  - The file is ignored through `.git/info/exclude` (never committed); the tracked `.gitignore` is not modified.
 - dependency paths target selected package worktree paths.
 - `pubspec.yaml` is never modified by this workflow.
 
@@ -220,7 +236,7 @@ Registry/persistence issues:
 Options:
 - `--scope PATH`: execution directory scope used to discover Flutter repositories (default: current directory).
   - if omitted, `add-repo` uses persisted `scope.root` when configured.
-- `--repo TEXT`: repository selector to attach (repeatable). When omitted in interactive TTY mode, `add-repo` opens the multiselect wizard.
+- `--repo TEXT`: repository selector to attach (repeatable): a name, package name, or a path to a Flutter repository, even outside `--scope`. When omitted in interactive TTY mode, `add-repo` opens the multiselect wizard.
 - `--package-branch-source TEXT`: per-repository target branch override in `<selector>=<branch>` format (repeatable).
 - `--package-base TEXT`: per-repository base branch override in `<selector>=<branch>` format (repeatable).
 - `--sync-policy TEXT`: sync behavior before creation: `auto` (interactive confirm, non-interactive false), `always`, `never`.

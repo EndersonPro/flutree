@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -23,7 +24,10 @@ func RenderCreateDryPlan(plan domain.CreateDryPlan) {
 	}
 	worktreeTable := renderTable([]string{"Role", "Repository", "Package", "Branch", "Base Branch", "Path"}, rows)
 
-	fileRows := [][]string{{"Override", plan.OverridePath}}
+	fileRows := [][]string{}
+	if plan.OverridePath != "" {
+		fileRows = append(fileRows, []string{"Override", plan.OverridePath})
+	}
 	if plan.WorkspacePath != "" {
 		fileRows = append(fileRows, []string{"Workspace", plan.WorkspacePath})
 	}
@@ -38,10 +42,12 @@ func RenderCreateDryPlan(plan domain.CreateDryPlan) {
 	b.WriteString("\n")
 	b.WriteString(uiBodyStyle.Render(worktreeTable))
 	b.WriteString("\n")
-	b.WriteString(filesHeader)
-	b.WriteString("\n")
-	b.WriteString(uiBodyStyle.Render(filesTable))
-	b.WriteString("\n")
+	if len(fileRows) > 0 {
+		b.WriteString(filesHeader)
+		b.WriteString("\n")
+		b.WriteString(uiBodyStyle.Render(filesTable))
+		b.WriteString("\n")
+	}
 	b.WriteString(safetyMsg)
 	fmt.Println(b.String())
 }
@@ -59,12 +65,42 @@ func RenderCreateSuccess(result domain.CreateResult) {
 		b.WriteString("\n")
 		b.WriteString(KeyValue("Workspace", result.WorkspacePath))
 	}
+	writeSDKSummary(&b, result.SDKSetup)
 	b.WriteString("\n")
 	b.WriteString(KeyValue("Next", result.NextStep))
 
 	header := uiIconStyle.Render("✅") + uiSuccessHeader.Render("Worktree Created")
 	fmt.Println(header)
 	fmt.Println(SuccessBox(b.String()))
+	warnSDKFailures(result.SDKSetup)
+}
+
+// writeSDKSummary adds one "SDK" line listing the worktrees whose SDK manager
+// ran successfully ("<repo>: <manager> <version>").
+func writeSDKSummary(b *strings.Builder, results []domain.SDKSetupResult) {
+	configured := []string{}
+	for _, r := range results {
+		if r.Status == "configured" {
+			configured = append(configured, fmt.Sprintf("%s: %s %s", r.Repo, r.Manager, r.Version))
+		}
+	}
+	if len(configured) == 0 {
+		return
+	}
+	b.WriteString("\n")
+	b.WriteString(KeyValue("SDK", strings.Join(configured, ", ")))
+}
+
+// warnSDKFailures prints one stderr warning per worktree whose SDK manager
+// failed; the worktree itself was created and stays usable.
+func warnSDKFailures(results []domain.SDKSetupResult) {
+	for _, r := range results {
+		if r.Status != "failed" {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "[warning] SDK setup failed for %s (%s %s): %s\n", r.Repo, r.Manager, r.Version, r.Message)
+		fmt.Fprintf(os.Stderr, "Hint: run the SDK manager manually in %s\n", r.Path)
+	}
 }
 
 func RenderDryRunOnly() {
@@ -149,10 +185,12 @@ func RenderAddRepoSuccess(result domain.AddRepoResult) {
 	b.WriteString(KeyValue("Added repos", strings.Join(result.AddedRepos, ", ")))
 	b.WriteString("\n")
 	b.WriteString(KeyValue("Override updated", result.OverridePath))
+	writeSDKSummary(&b, result.SDKSetup)
 
 	header := uiIconStyle.Render("✅") + uiSuccessHeader.Render("Repository Attached")
 	fmt.Println(header)
 	fmt.Println(SuccessBox(b.String()))
+	warnSDKFailures(result.SDKSetup)
 }
 
 func RenderList(rows []domain.ListRow, includeUnmanaged bool) {

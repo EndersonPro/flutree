@@ -31,11 +31,14 @@ type fakeCreateRunner struct {
 	nonInteractiveCaptured    bool
 	capturedPackageBaseBranch map[string]string
 	capturedSyncWithRemote    bool
+	capturedScope             string
+	applied                   bool
 }
 
 func (f *fakeCreateRunner) BuildDryPlan(input domain.CreateInput) (domain.CreateDryPlan, error) {
 	f.nonInteractiveCaptured = input.NonInteractive
 	f.capturedPackageBaseBranch = input.PackageBaseBranch
+	f.capturedScope = input.ExecutionScope
 	if f.planErr != nil {
 		return domain.CreateDryPlan{}, f.planErr
 	}
@@ -44,6 +47,7 @@ func (f *fakeCreateRunner) BuildDryPlan(input domain.CreateInput) (domain.Create
 
 func (f *fakeCreateRunner) Apply(plan domain.CreateDryPlan, opts domain.CreateApplyOptions) (domain.CreateResult, error) {
 	f.capturedSyncWithRemote = opts.SyncWithRemote
+	f.applied = true
 	if f.applyErr != nil {
 		return domain.CreateResult{}, f.applyErr
 	}
@@ -107,11 +111,11 @@ type fakeConfigRunner struct {
 	setErr error
 }
 
-func (f *fakeConfigRunner) GetScopeRoot(key string) (string, error) {
+func (f *fakeConfigRunner) Get(key string) (string, error) {
 	return f.getVal, f.getErr
 }
 
-func (f *fakeConfigRunner) SetScopeRoot(key, value string) (string, error) {
+func (f *fakeConfigRunner) Set(key, value string) (string, error) {
 	return f.setVal, f.setErr
 }
 
@@ -495,7 +499,7 @@ func TestCompleteWorktree_HappyPath(t *testing.T) {
 	}
 	svc := MCPServices{Complete: fake}
 	handler := makeCompleteWorktreeHandler(svc)
-	result, err := handler(context.Background(), makeRequest(map[string]any{"name": "wt1"}))
+	result, err := handler(context.Background(), makeRequest(map[string]any{"name": "wt1", "confirm": true}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -516,7 +520,7 @@ func TestCompleteWorktree_NonExistentName(t *testing.T) {
 	}
 	svc := MCPServices{Complete: fake}
 	handler := makeCompleteWorktreeHandler(svc)
-	result, err := handler(context.Background(), makeRequest(map[string]any{"name": "ghost"}))
+	result, err := handler(context.Background(), makeRequest(map[string]any{"name": "ghost", "confirm": true}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

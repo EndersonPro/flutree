@@ -37,11 +37,13 @@ func (g *Gateway) ListWorktrees(repoRoot string) ([]domain.GitWorktreeEntry, err
 }
 
 func (g *Gateway) CreateWorktree(repoRoot, path, branch, baseBranch string) error {
+	baseBranch, _ = g.resolveStartPoint(repoRoot, baseBranch)
 	_, err := g.run(repoRoot, "worktree", "add", "-b", branch, path, baseBranch)
 	return err
 }
 
 func (g *Gateway) CreateWorktreeNew(repoRoot, path, branch, startPoint string) error {
+	startPoint, _ = g.resolveStartPoint(repoRoot, startPoint)
 	if _, err := g.run(repoRoot, "worktree", "add", "--detach", path, startPoint); err != nil {
 		return err
 	}
@@ -169,6 +171,44 @@ func (g *Gateway) RemoveWorktree(repoRoot, path string, force bool) error {
 	return err
 }
 
+// PruneWorktrees removes git's metadata for worktrees whose directory no longer exists.
+func (g *Gateway) PruneWorktrees(repoRoot string) error {
+	_, err := g.run(repoRoot, "worktree", "prune")
+	return err
+}
+
+// EnsureLocalExclude appends pattern to the repository's info/exclude. Linked
+// worktrees resolve it to the shared exclude of the main repository, which Git
+// applies to untracked files only and never commits.
+func (g *Gateway) EnsureLocalExclude(worktreePath, pattern string) error {
+	out, err := g.run("", "-C", worktreePath, "rev-parse", "--git-path", "info/exclude")
+	if err != nil {
+		return err
+	}
+	excludePath := strings.TrimSpace(out)
+	if !filepath.IsAbs(excludePath) {
+		excludePath = filepath.Join(worktreePath, excludePath)
+	}
+	content := ""
+	if b, err := os.ReadFile(excludePath); err == nil {
+		content = string(b)
+		for _, line := range strings.Split(content, "\n") {
+			if strings.TrimSpace(line) == pattern {
+				return nil
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(excludePath), 0o755); err != nil {
+		return err
+	}
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	return os.WriteFile(excludePath, []byte(content+pattern+"\n"), 0o644)
+}
+
 func (g *Gateway) IsDirty(path string) (bool, error) {
 	out, err := g.run("", "-C", path, "status", "--porcelain")
 	if err != nil {
@@ -208,15 +248,9 @@ func (g *Gateway) DiscoverFlutterRepos(scope string) ([]domain.DiscoveredFlutter
 	sort.Strings(keys)
 
 	for _, root := range keys {
-		pkgName, ok := readPubspecName(filepath.Join(root, "pubspec.yaml"))
-		if !ok {
-			continue
+		if repo, ok := flutterRepoAt(root); ok {
+			repos = append(repos, repo)
 		}
-		repos = append(repos, domain.DiscoveredFlutterRepo{
-			Name:        filepath.Base(root),
-			RepoRoot:    root,
-			PackageName: pkgName,
-		})
 	}
 
 	if len(repos) == 0 {
@@ -224,6 +258,133 @@ func (g *Gateway) DiscoverFlutterRepos(scope string) ([]domain.DiscoveredFlutter
 	}
 
 	return repos, nil
+}
+
+// flutterRepoAt applies the single rule for "is a Flutter repository": the
+// folder has a pubspec.yaml with a package name (the .git check is the caller's).
+func flutterRepoAt(root string) (domain.DiscoveredFlutterRepo, bool) {
+	pkgName, ok := readPubspecName(filepath.Join(root, "pubspec.yaml"))
+	if !ok {
+		return domain.DiscoveredFlutterRepo{}, false
+	}
+	return domain.DiscoveredFlutterRepo{Name: filepath.Base(root), RepoRoot: root, PackageName: pkgName}, true
+}
+
+// InspectFlutterRepo reports whether path itself is a Flutter repository: a
+// directory with .git and a pubspec.yaml, as DiscoverFlutterRepos requires.
+func (g *Gateway) InspectFlutterRepo(path string) (domain.DiscoveredFlutterRepo, bool, error) {
+	root := domain.NormalizePath(path)
+	if root == "" {
+		return domain.DiscoveredFlutterRepo{}, false, nil
+	}
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		return domain.DiscoveredFlutterRepo{}, false, nil
+	}
+	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
+		return domain.DiscoveredFlutterRepo{}, false, nil
+	}
+	repo, ok := flutterRepoAt(root)
+	return repo, ok, nil
+}
+
+// BaseBranchExists reports whether base can be used as a start point: any
+// commit-ish git resolves locally (branch, tag, SHA) or origin/<base>. It never
+// touches the network, so it cannot hang offline.
+func (g *Gateway) BaseBranchExists(repoRoot, base string) (bool, error) {
+	_, ok := g.resolveStartPoint(repoRoot, strings.TrimSpace(base))
+	return ok, nil
+}
+
+// resolveStartPoint returns the ref to start a worktree from: base itself
+// when it resolves to a commit, else origin/<base> when that remote-tracking
+// ref exists. BaseBranchExists and worktree creation share it, so a base
+// that passes the up-front check is always usable as a start point.
+func (g *Gateway) resolveStartPoint(repoRoot, base string) (string, bool) {
+	if base == "" {
+		return base, false
+	}
+	if _, err := g.run(repoRoot, "rev-parse", "--verify", "--quiet", base+"^{commit}"); err == nil {
+		return base, true
+	}
+	remote := "origin/" + base
+	if _, err := g.run(repoRoot, "rev-parse", "--verify", "--quiet", "refs/remotes/"+remote+"^{commit}"); err == nil {
+		return remote, true
+	}
+	return base, false
+}
+
+// AheadBehind counts how far the worktree HEAD is ahead of and behind base.
+// base is resolved with resolveStartPoint, so it matches creation: a local
+// commit-ish, else origin/<base>.
+func (g *Gateway) AheadBehind(worktreePath, base string) (int, int, error) {
+	ref, ok := g.resolveStartPoint(worktreePath, strings.TrimSpace(base))
+	if !ok {
+		return 0, 0, domain.NewError(domain.CategoryGit, 1, "Base branch '"+base+"' does not resolve.", worktreePath, nil)
+	}
+	out, err := g.run(worktreePath, "rev-list", "--left-right", "--count", ref+"...HEAD")
+	if err != nil {
+		return 0, 0, err
+	}
+	parts := strings.Fields(out)
+	if len(parts) != 2 {
+		return 0, 0, domain.NewError(domain.CategoryGit, 1, "Unexpected rev-list output.", out, nil)
+	}
+	behind, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, domain.NewError(domain.CategoryGit, 1, "Failed to parse behind counter.", out, err)
+	}
+	ahead, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, domain.NewError(domain.CategoryGit, 1, "Failed to parse ahead counter.", out, err)
+	}
+	return ahead, behind, nil
+}
+
+// DeleteBranch force-deletes a local branch. Git refuses a checked-out branch.
+func (g *Gateway) DeleteBranch(repoRoot, branch string) error {
+	_, err := g.run(repoRoot, "branch", "-D", strings.TrimSpace(branch))
+	return err
+}
+
+// CurrentBranch returns the checked-out branch, or "" when HEAD is detached.
+func (g *Gateway) CurrentBranch(repoRoot string) (string, error) {
+	out, err := g.run(repoRoot, "symbolic-ref", "--short", "-q", "HEAD")
+	if err != nil {
+		// symbolic-ref exits 1 on a detached HEAD; any other failure surfaces
+		// when the caller touches the repo again, so treat it as detached.
+		var appErr *domain.AppError
+		if errors.As(err, &appErr) && appErr.Category == domain.CategoryPrecondition {
+			return "", err
+		}
+		return "", nil
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// ListBranches lists local branches and remote-tracking branches (without the
+// symbolic origin/HEAD). It reads local refs only: no fetch, no network.
+func (g *Gateway) ListBranches(repoRoot string) ([]string, []string, error) {
+	out, err := g.run(repoRoot, "for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes")
+	if err != nil {
+		return nil, nil, err
+	}
+	local, remote := []string{}, []string{}
+	for _, ref := range strings.Split(strings.TrimSpace(out), "\n") {
+		ref = strings.TrimSpace(ref)
+		switch {
+		case strings.HasPrefix(ref, "refs/heads/"):
+			local = append(local, strings.TrimPrefix(ref, "refs/heads/"))
+		case strings.HasPrefix(ref, "refs/remotes/"):
+			name := strings.TrimPrefix(ref, "refs/remotes/")
+			if strings.HasSuffix(name, "/HEAD") {
+				continue
+			}
+			remote = append(remote, name)
+		}
+	}
+	sort.Strings(local)
+	sort.Strings(remote)
+	return local, remote, nil
 }
 
 func (g *Gateway) run(cwd string, args ...string) (string, error) {

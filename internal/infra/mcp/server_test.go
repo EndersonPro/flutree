@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// expectedToolNames is the canonical list of the 9 tools flutree exposes via MCP.
+// expectedToolNames is the canonical list of the tools flutree exposes via MCP.
 var expectedToolNames = []string{
 	"list_worktrees",
 	"create_worktree",
@@ -17,6 +17,12 @@ var expectedToolNames = []string{
 	"get_config",
 	"set_config",
 	"get_version",
+	"discover_repos",
+	"inspect_repo",
+	"list_branches",
+	"plan_create",
+	"create_workspace",
+	"workspace_status",
 }
 
 func fullServices() MCPServices {
@@ -28,6 +34,7 @@ func fullServices() MCPServices {
 		PubGet:   &fakePubGetRunner{},
 		Clean:    &fakeCleanRunner{},
 		Config:   &fakeConfigRunner{},
+		Inspect:  &fakeInspectRunner{},
 	}
 }
 
@@ -41,7 +48,7 @@ func TestBuildServerIsNotNil(t *testing.T) {
 	}
 }
 
-func TestBuildServerRegistersExactlyNineTools(t *testing.T) {
+func TestBuildServerRegistersExactlyTheExpectedTools(t *testing.T) {
 	s, err := BuildServer("0.0.0-test", fullServices())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

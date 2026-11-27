@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 
@@ -132,13 +133,72 @@ func makeAddRepoHandler(svc MCPServices) toolHandler {
 	}
 }
 
+// describeCompletion renders what complete_worktree will delete and keep, for
+// the confirmation question. status may be nil when it could not be read.
+func describeCompletion(name string, force bool, status *domain.WorkspaceStatus) string {
+	var b strings.Builder
+	b.WriteString("Complete workspace '" + name + "'? This DELETES its worktree folders from disk")
+	if status == nil {
+		b.WriteString(" (root and every package worktree) and marks it completed in the registry.\n")
+		b.WriteString("The local branches are kept.")
+	} else {
+		b.WriteString(" and marks it completed in the registry:\n")
+		branches := []string{}
+		seen := map[string]bool{}
+		all := append([]domain.WorktreeStatus{status.Root}, status.Packages...)
+		for _, wt := range all {
+			if wt.Path == "" {
+				continue
+			}
+			line := "- delete " + wt.Path + " (branch " + wt.Branch + ")"
+			if wt.Dirty {
+				line += " HAS UNCOMMITTED CHANGES"
+			}
+			b.WriteString(line + "\n")
+			if wt.Branch != "" && !seen[wt.Branch] {
+				seen[wt.Branch] = true
+				branches = append(branches, wt.Branch)
+			}
+		}
+		b.WriteString("The local branches are kept: " + strings.Join(branches, ", ") + ".")
+	}
+	if force {
+		b.WriteString("\nforce=true: worktrees with uncommitted changes are removed too and those changes are lost.")
+	}
+	return b.String()
+}
+
 // makeCompleteWorktreeHandler returns the handler for the complete_worktree tool.
+// It is destructive: a client that supports elicitation is always asked; any
+// other client gets needs_user_input until the agent calls again with
+// confirm=true after asking the user.
 func makeCompleteWorktreeHandler(svc MCPServices) toolHandler {
-	return func(_ context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	return func(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 		return withPanicRecovery(func() (*mcpCallToolResult, error) {
+			name := req.GetString("name", "")
+			force := req.GetBool("force", false)
+
+			var status *domain.WorkspaceStatus
+			if svc.Inspect != nil && strings.TrimSpace(name) != "" {
+				st, err := svc.Inspect.WorkspaceStatus(name)
+				if err != nil {
+					return toToolError(err), nil
+				}
+				status = &st
+			}
+			if res, ok := requiresConfirmation(ctx, req, confirmSpec{
+				Message: describeCompletion(name, force, status),
+				Always:  true,
+				Pending: map[string]any{"completed": false, "status": "confirmation_required"},
+				Instruction: "Nothing was removed. complete_worktree deletes the worktree folders. Ask the user whether to remove workspace '" + name +
+					"' (use workspace_status to show what is dirty), and only after they explicitly say yes call complete_worktree again with the same arguments and confirm=true.",
+			}); !ok {
+				return res, nil
+			}
+
 			input := domain.CompleteInput{
-				Name:           req.GetString("name", ""),
-				Force:          req.GetBool("force", false),
+				Name:           name,
+				Force:          force,
 				NonInteractive: true,
 				Yes:            true,
 			}
@@ -151,13 +211,25 @@ func makeCompleteWorktreeHandler(svc MCPServices) toolHandler {
 	}
 }
 
-// makePubGetHandler returns the handler for the pubget tool.
+// makePubGetHandler returns the handler for the pubget tool. force=true is
+// gated like a destructive action; a plain pub get needs no confirmation.
 func makePubGetHandler(svc MCPServices) toolHandler {
-	return func(_ context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	return func(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 		return withPanicRecovery(func() (*mcpCallToolResult, error) {
+			name := req.GetString("name", "")
+			force := req.GetBool("force", false)
+			if force {
+				if res, ok := requiresConfirmation(ctx, req, confirmSpec{
+					Message:     "Force pub get in workspace '" + name + "'? It runs even when dependencies are up to date and can rewrite pubspec.lock in every worktree.",
+					Pending:     map[string]any{"executed": false, "status": "confirmation_required"},
+					Instruction: "Nothing was run. force=true needs the user's approval: ask the user, and only after they explicitly say yes call pubget again with the same arguments and confirm=true.",
+				}); !ok {
+					return res, nil
+				}
+			}
 			input := domain.PubGetInput{
-				Name:  req.GetString("name", ""),
-				Force: req.GetBool("force", false),
+				Name:  name,
+				Force: force,
 			}
 			result, err := svc.PubGet.Run(input)
 			if err != nil {
@@ -189,7 +261,7 @@ func makeGetConfigHandler(svc MCPServices) toolHandler {
 	return func(_ context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 		return withPanicRecovery(func() (*mcpCallToolResult, error) {
 			key := req.GetString("key", "")
-			value, err := svc.Config.GetScopeRoot(key)
+			value, err := svc.Config.Get(key)
 			if err != nil {
 				return toToolError(err), nil
 			}
@@ -204,7 +276,7 @@ func makeSetConfigHandler(svc MCPServices) toolHandler {
 		return withPanicRecovery(func() (*mcpCallToolResult, error) {
 			key := req.GetString("key", "")
 			value := req.GetString("value", "")
-			newValue, err := svc.Config.SetScopeRoot(key, value)
+			newValue, err := svc.Config.Set(key, value)
 			if err != nil {
 				return toToolError(err), nil
 			}

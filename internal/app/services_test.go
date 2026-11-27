@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,9 @@ type fakeGit struct {
 	worktrees   map[string][]domain.GitWorktreeEntry
 	dirtyByPath map[string]bool
 	removed     []string
+	// aheadBehind maps a worktree path to {ahead, behind}; a missing path
+	// makes AheadBehind fail like an unresolvable base.
+	aheadBehind map[string][2]int
 }
 
 func (f *fakeGit) EnsureRepo() (string, error) { return f.currentRepo, nil }
@@ -29,10 +33,13 @@ func (f *fakeGit) BranchExists(string, string) (bool, error)           { return 
 func (f *fakeGit) RemoteBranchExists(string, string) (bool, error)     { return false, nil }
 func (f *fakeGit) SyncBranchWithRemote(string, string) error           { return nil }
 func (f *fakeGit) SyncBaseBranch(string, string) (string, error)       { return "origin/main", nil }
+func (f *fakeGit) PruneWorktrees(string) error                         { return nil }
 func (f *fakeGit) RemoveWorktree(repoRoot, path string, force bool) error {
 	f.removed = append(f.removed, repoRoot+"::"+path)
 	return nil
 }
+func (f *fakeGit) EnsureLocalExclude(string, string) error { return nil }
+
 func (f *fakeGit) IsDirty(path string) (bool, error) {
 	if f.dirtyByPath == nil {
 		return false, nil
@@ -42,6 +49,11 @@ func (f *fakeGit) IsDirty(path string) (bool, error) {
 func (f *fakeGit) DiscoverFlutterRepos(scope string) ([]domain.DiscoveredFlutterRepo, error) {
 	return nil, nil
 }
+func (f *fakeGit) InspectFlutterRepo(string) (domain.DiscoveredFlutterRepo, bool, error) {
+	return domain.DiscoveredFlutterRepo{}, false, nil
+}
+func (f *fakeGit) BaseBranchExists(string, string) (bool, error) { return true, nil }
+func (f *fakeGit) DeleteBranch(string, string) error             { return nil }
 
 type fakeRegistry struct {
 	records   []domain.RegistryRecord
@@ -450,4 +462,16 @@ func TestListGlobalAllIncludesUnmanagedAcrossRegisteredRepos(t *testing.T) {
 	if unmanaged != 2 {
 		t.Fatalf("expected unmanaged rows from both repos, got %d (%+v)", unmanaged, rows)
 	}
+}
+
+func (f *fakeGit) CurrentBranch(string) (string, error) { return "main", nil }
+func (f *fakeGit) ListBranches(string) ([]string, []string, error) {
+	return []string{"main"}, []string{"origin/main"}, nil
+}
+
+func (f *fakeGit) AheadBehind(path, base string) (int, int, error) {
+	if counts, ok := f.aheadBehind[path]; ok {
+		return counts[0], counts[1], nil
+	}
+	return 0, 0, errors.New("base " + base + " does not resolve")
 }

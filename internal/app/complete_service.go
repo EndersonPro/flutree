@@ -88,6 +88,18 @@ func (s *CompleteService) Run(input domain.CompleteInput) (domain.CompleteResult
 		}
 	}
 
+	// Drop git metadata of worktrees deleted by hand, or they stay "prunable"
+	// and block re-creating the same path. Best-effort: the worktrees are
+	// already removed, so a prune failure must not leave the registry behind.
+	pruned := map[string]bool{}
+	for _, target := range targets {
+		if target.RepoRoot == "" || pruned[target.RepoRoot] {
+			continue
+		}
+		pruned[target.RepoRoot] = true
+		_ = s.git.PruneWorktrees(target.RepoRoot)
+	}
+
 	if removeContainer {
 		if err := os.RemoveAll(containerPath); err != nil {
 			return domain.CompleteResult{}, domain.NewError(

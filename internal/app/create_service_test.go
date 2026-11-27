@@ -25,6 +25,12 @@ type fakeCreateGit struct {
 	syncCalls          []string
 	syncErr            error
 	remoteBranchErr    error
+	// missingBases lists "<repoRoot>::<branch>" base branches that do not exist.
+	missingBases  map[string]bool
+	deleted       []string
+	inspectable   map[string]domain.DiscoveredFlutterRepo
+	failCreateAt  string
+	discoverCalls int
 }
 
 func (f *fakeCreateGit) EnsureRepo() (string, error) { return "", nil }
@@ -37,6 +43,9 @@ func (f *fakeCreateGit) CreateWorktree(repoRoot, path, branch, baseBranch string
 	return nil
 }
 func (f *fakeCreateGit) CreateWorktreeNew(repoRoot, path, branch, startPoint string) error {
+	if f.failCreateAt != "" && strings.HasSuffix(path, f.failCreateAt) {
+		return errors.New("boom")
+	}
 	_ = os.MkdirAll(path, 0o755)
 	f.created = append(f.created, strings.Join([]string{"new", repoRoot, path, branch, startPoint}, "::"))
 	return nil
@@ -75,13 +84,27 @@ func (f *fakeCreateGit) SyncBaseBranch(repoRoot, baseBranch string) (string, err
 	}
 	return "origin/" + baseBranch, nil
 }
+func (f *fakeCreateGit) PruneWorktrees(string) error { return nil }
 func (f *fakeCreateGit) RemoveWorktree(repoRoot, path string, force bool) error {
 	f.removed = append(f.removed, repoRoot+"::"+path)
 	return nil
 }
-func (f *fakeCreateGit) IsDirty(path string) (bool, error) { return f.dirty, nil }
+func (f *fakeCreateGit) IsDirty(path string) (bool, error)       { return f.dirty, nil }
+func (f *fakeCreateGit) EnsureLocalExclude(string, string) error { return nil }
 func (f *fakeCreateGit) DiscoverFlutterRepos(scope string) ([]domain.DiscoveredFlutterRepo, error) {
+	f.discoverCalls++
 	return f.repos, nil
+}
+func (f *fakeCreateGit) InspectFlutterRepo(path string) (domain.DiscoveredFlutterRepo, bool, error) {
+	repo, ok := f.inspectable[path]
+	return repo, ok, nil
+}
+func (f *fakeCreateGit) BaseBranchExists(repoRoot, branch string) (bool, error) {
+	return !f.missingBases[repoRoot+"::"+branch], nil
+}
+func (f *fakeCreateGit) DeleteBranch(repoRoot, branch string) error {
+	f.deleted = append(f.deleted, repoRoot+"::"+branch)
+	return nil
 }
 
 type fakeCreatePrompt struct {
@@ -137,8 +160,8 @@ func TestBuildDryPlanNoPackageCreatesRootOnlyPlan(t *testing.T) {
 	if len(plan.Packages) != 0 {
 		t.Fatalf("expected no package plans in no-package mode, got %d", len(plan.Packages))
 	}
-	if !strings.Contains(plan.OverrideContent, "dependency_overrides:\n  {}") {
-		t.Fatalf("expected empty overrides in no-package mode, got: %s", plan.OverrideContent)
+	if plan.OverridePath != "" || plan.OverrideContent != "" {
+		t.Fatalf("expected no override file in no-package mode, got path=%q content=%q", plan.OverridePath, plan.OverrideContent)
 	}
 	if p.askTextCalls != 0 {
 		t.Fatalf("expected no package base prompts in no-package mode, got %d", p.askTextCalls)
@@ -340,105 +363,6 @@ func TestBuildWorkspaceFoldersFallsBackToAbsoluteRootPath(t *testing.T) {
 
 	if !reflect.DeepEqual(folders, want) {
 		t.Fatalf("unexpected folders. got=%v want=%v", folders, want)
-	}
-}
-
-func TestApplyAddsOverrideEntryToGitignoreWhenMissing(t *testing.T) {
-	root := t.TempDir()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	repoRoot := filepath.Join(root, "root-app")
-	g := &fakeCreateGit{
-		repos: []domain.DiscoveredFlutterRepo{{Name: "root-app", RepoRoot: repoRoot, PackageName: "root_app"}},
-	}
-	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
-
-	name := "gitignore-missing-" + strings.ReplaceAll(filepath.Base(root), "_", "-")
-	_ = os.RemoveAll(filepath.Join(destinationRoot(), normalizeWorktreeName(name)))
-
-	plan, err := svc.BuildDryPlan(domain.CreateInput{
-		Name:           name,
-		Branch:         "feature/gitignore-missing",
-		BaseBranch:     "main",
-		ExecutionScope: root,
-		RootSelector:   "root-app",
-		NonInteractive: true,
-	})
-	if err != nil {
-		t.Fatalf("build plan failed: %v", err)
-	}
-
-	if err := os.MkdirAll(plan.Root.Path, 0o755); err != nil {
-		t.Fatalf("failed to create root path: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(plan.Root.Path, ".gitignore"), []byte(".dart_tool/"), 0o644); err != nil {
-		t.Fatalf("failed to write .gitignore fixture: %v", err)
-	}
-
-	if _, err := svc.Apply(plan, domain.CreateApplyOptions{}); err != nil {
-		t.Fatalf("apply failed: %v", err)
-	}
-
-	b, err := os.ReadFile(filepath.Join(plan.Root.Path, ".gitignore"))
-	if err != nil {
-		t.Fatalf("failed to read .gitignore: %v", err)
-	}
-	got := string(b)
-	want := ".dart_tool/\npubspec_overrides.yaml\n"
-	if got != want {
-		t.Fatalf("unexpected .gitignore content. got=%q want=%q", got, want)
-	}
-}
-
-func TestApplyDoesNotDuplicateOverrideEntryInGitignore(t *testing.T) {
-	root := t.TempDir()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	repoRoot := filepath.Join(root, "root-app")
-	g := &fakeCreateGit{
-		repos: []domain.DiscoveredFlutterRepo{{Name: "root-app", RepoRoot: repoRoot, PackageName: "root_app"}},
-	}
-	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
-
-	name := "gitignore-existing-" + strings.ReplaceAll(filepath.Base(root), "_", "-")
-	_ = os.RemoveAll(filepath.Join(destinationRoot(), normalizeWorktreeName(name)))
-
-	plan, err := svc.BuildDryPlan(domain.CreateInput{
-		Name:           name,
-		Branch:         "feature/gitignore-existing",
-		BaseBranch:     "main",
-		ExecutionScope: root,
-		RootSelector:   "root-app",
-		NonInteractive: true,
-	})
-	if err != nil {
-		t.Fatalf("build plan failed: %v", err)
-	}
-
-	if err := os.MkdirAll(plan.Root.Path, 0o755); err != nil {
-		t.Fatalf("failed to create root path: %v", err)
-	}
-	initial := ".dart_tool/\npubspec_overrides.yaml\n"
-	if err := os.WriteFile(filepath.Join(plan.Root.Path, ".gitignore"), []byte(initial), 0o644); err != nil {
-		t.Fatalf("failed to write .gitignore fixture: %v", err)
-	}
-
-	if _, err := svc.Apply(plan, domain.CreateApplyOptions{}); err != nil {
-		t.Fatalf("apply failed: %v", err)
-	}
-
-	b, err := os.ReadFile(filepath.Join(plan.Root.Path, ".gitignore"))
-	if err != nil {
-		t.Fatalf("failed to read .gitignore: %v", err)
-	}
-	got := string(b)
-	if strings.Count(got, "pubspec_overrides.yaml") != 1 {
-		t.Fatalf("expected single override entry, got=%q", got)
-	}
-	if got != initial {
-		t.Fatalf("expected .gitignore to remain unchanged. got=%q want=%q", got, initial)
 	}
 }
 
@@ -998,153 +922,6 @@ func TestApplySkipsRemoteCheckWhenSyncWithRemoteIsDisabled(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Tests for mergePubspecOverrides and readExistingOverrides (Bug 2)
-// ---------------------------------------------------------------------------
-
-func TestMergePubspecOverridesParsesRealisticPubspec(t *testing.T) {
-	pubspec := `name: my_app
-version: 1.0.0
-
-# top-level comment
-dependency_overrides:
-  # path-based override
-  siigo_pos_l10n:
-    path: ../old_l10n
-
-  # quoted path
-  siigo_pos_core:
-    path: "../core"
-
-  # git-based override — must be skipped
-  siigo_pos_git:
-    git:
-      url: https://github.com/example/pkg.git
-      ref: main
-
-dev_dependencies:
-  flutter_test:
-    sdk: flutter
-`
-	dir := t.TempDir()
-	pubspecPath := filepath.Join(dir, "pubspec.yaml")
-	if err := os.WriteFile(pubspecPath, []byte(pubspec), 0o644); err != nil {
-		t.Fatalf("write pubspec: %v", err)
-	}
-
-	entries := mergePubspecOverrides(make(map[string]string), pubspecPath)
-
-	if entries["siigo_pos_l10n"] != "../old_l10n" {
-		t.Errorf("expected siigo_pos_l10n=../old_l10n, got %q", entries["siigo_pos_l10n"])
-	}
-	if entries["siigo_pos_core"] != "../core" {
-		t.Errorf("expected siigo_pos_core=../core, got %q", entries["siigo_pos_core"])
-	}
-	if _, ok := entries["siigo_pos_git"]; ok {
-		t.Errorf("git-based override must be skipped, but got entry for siigo_pos_git")
-	}
-	if _, ok := entries["flutter_test"]; ok {
-		t.Errorf("dev_dependencies section must not be parsed, but got entry for flutter_test")
-	}
-}
-
-func TestReadExistingOverridesRoundTripsFormatOverrideYAML(t *testing.T) {
-	input := map[string]string{
-		"siigo_pos_l10n":  "../l10n",
-		"siigo_pos_core":  "../core",
-		"siigo_pos_extra": "../../extras/extra",
-	}
-	content := formatOverrideYAML(input)
-
-	dir := t.TempDir()
-	overridePath := filepath.Join(dir, "pubspec_overrides.yaml")
-	if err := os.WriteFile(overridePath, []byte(content), 0o644); err != nil {
-		t.Fatalf("write override file: %v", err)
-	}
-
-	got := readExistingOverrides(overridePath)
-	if !reflect.DeepEqual(got, input) {
-		t.Errorf("round-trip mismatch.\nwant=%v\n got=%v", input, got)
-	}
-}
-
-func TestWriteOverrideFileUserPackageWinsOverPubspecOverride(t *testing.T) {
-	// Scenario: pubspec.yaml has dependency_overrides with siigo_pos_l10n -> ../old
-	// User creates worktree including siigo_pos_l10n at ../new
-	// Result: siigo_pos_l10n must be ../new (user wins), not ../old
-	dir := t.TempDir()
-
-	pubspec := `name: my_app
-dependency_overrides:
-  siigo_pos_l10n:
-    path: ../old
-  siigo_pos_other:
-    path: ../other
-`
-	if err := os.WriteFile(filepath.Join(dir, "pubspec.yaml"), []byte(pubspec), 0o644); err != nil {
-		t.Fatalf("write pubspec: %v", err)
-	}
-
-	overridePath := filepath.Join(dir, "pubspec_overrides.yaml")
-	newPackages := []domain.PlannedWorktree{
-		{
-			Repo: domain.DiscoveredFlutterRepo{PackageName: "siigo_pos_l10n"},
-			Path: filepath.Join(dir, "new"),
-		},
-	}
-
-	if err := writeOverrideFile(overridePath, dir, newPackages); err != nil {
-		t.Fatalf("writeOverrideFile: %v", err)
-	}
-
-	result := readExistingOverrides(overridePath)
-	if result["siigo_pos_l10n"] != "new" {
-		t.Errorf("user package must win: want siigo_pos_l10n=new, got %q", result["siigo_pos_l10n"])
-	}
-	if result["siigo_pos_other"] != "../other" {
-		t.Errorf("pubspec override should be carried: want siigo_pos_other=../other, got %q", result["siigo_pos_other"])
-	}
-}
-
-func TestWriteOverrideFilePreservesExistingEntriesNotInPubspecOrNewPackages(t *testing.T) {
-	// Pre-existing pubspec_overrides.yaml entry not in pubspec.yaml nor in new packages
-	// must survive a rewrite.
-	dir := t.TempDir()
-
-	// pubspec.yaml with no dependency_overrides
-	if err := os.WriteFile(filepath.Join(dir, "pubspec.yaml"), []byte("name: my_app\n"), 0o644); err != nil {
-		t.Fatalf("write pubspec: %v", err)
-	}
-
-	// Pre-existing override file with a previously written entry
-	existing := formatOverrideYAML(map[string]string{
-		"siigo_pre_existing": "../pre_existing",
-	})
-	overridePath := filepath.Join(dir, "pubspec_overrides.yaml")
-	if err := os.WriteFile(overridePath, []byte(existing), 0o644); err != nil {
-		t.Fatalf("write existing overrides: %v", err)
-	}
-
-	newPackages := []domain.PlannedWorktree{
-		{
-			Repo: domain.DiscoveredFlutterRepo{PackageName: "siigo_new_pkg"},
-			Path: filepath.Join(dir, "new_pkg"),
-		},
-	}
-
-	if err := writeOverrideFile(overridePath, dir, newPackages); err != nil {
-		t.Fatalf("writeOverrideFile: %v", err)
-	}
-
-	result := readExistingOverrides(overridePath)
-	if result["siigo_pre_existing"] != "../pre_existing" {
-		t.Errorf("pre-existing entry must survive rewrite, got %q", result["siigo_pre_existing"])
-	}
-	if result["siigo_new_pkg"] != "new_pkg" {
-		t.Errorf("new package must be present, got %q", result["siigo_new_pkg"])
-	}
-}
-
 func TestBuildDryPlanPackageBranchUsesExactExplicitOrDefaultRootBranch(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -1190,3 +967,107 @@ func TestBuildDryPlanPackageBranchUsesExactExplicitOrDefaultRootBranch(t *testin
 		})
 	}
 }
+
+func TestBuildDryPlanUsesExplicitReposInsteadOfDiscovery(t *testing.T) {
+	root := t.TempDir()
+	repos := []domain.DiscoveredFlutterRepo{
+		{Name: "root-app", RepoRoot: filepath.Join(root, "a", "root-app"), PackageName: "root_app"},
+		{Name: "pkg-x", RepoRoot: filepath.Join(root, "b", "pkg-x"), PackageName: "pkg_x"},
+	}
+	g := &fakeCreateGit{}
+	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
+
+	plan, err := svc.BuildDryPlan(domain.CreateInput{
+		Name: "explicit", BaseBranch: "main", ExecutionScope: root, Repos: repos,
+		RootSelector: "root-app", PackageSelectors: []string{"pkg-x"},
+		PackageBaseBranch: map[string]string{"pkg-x": "main"}, NonInteractive: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if g.discoverCalls != 0 {
+		t.Fatalf("explicit repos must replace discovery, got %d discover calls", g.discoverCalls)
+	}
+	if len(plan.Packages) != 1 || plan.Packages[0].Repo.Name != "pkg-x" {
+		t.Fatalf("unexpected packages: %+v", plan.Packages)
+	}
+}
+
+func TestBuildDryPlanAddsPathSelectorOutsideScope(t *testing.T) {
+	scopeRepo := domain.DiscoveredFlutterRepo{Name: "root-app", RepoRoot: "/scope/root-app", PackageName: "root_app"}
+	outside := domain.DiscoveredFlutterRepo{Name: "pkg-x", RepoRoot: "/elsewhere/pkg-x", PackageName: "pkg_x"}
+	g := &fakeCreateGit{repos: []domain.DiscoveredFlutterRepo{scopeRepo}, inspectable: map[string]domain.DiscoveredFlutterRepo{"/elsewhere/pkg-x": outside}}
+	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
+
+	plan, err := svc.BuildDryPlan(domain.CreateInput{
+		Name: "outside", BaseBranch: "main", ExecutionScope: "/scope", RootSelector: "root-app",
+		PackageSelectors: []string{"/elsewhere/pkg-x"}, PackageBaseBranch: map[string]string{"pkg-x": "main"}, NonInteractive: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(plan.Packages) != 1 || plan.Packages[0].Repo.RepoRoot != "/elsewhere/pkg-x" {
+		t.Fatalf("expected the outside repo as package, got %+v", plan.Packages)
+	}
+}
+
+func TestBuildDryPlanFailsWhenPackageBaseBranchIsMissing(t *testing.T) {
+	root := t.TempDir()
+	repos := []domain.DiscoveredFlutterRepo{
+		{Name: "root-app", RepoRoot: filepath.Join(root, "root-app"), PackageName: "root_app"},
+		{Name: "core", RepoRoot: filepath.Join(root, "core"), PackageName: "core"},
+	}
+	g := &fakeCreateGit{repos: repos, missingBases: map[string]bool{filepath.Join(root, "core") + "::develop": true}}
+	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
+
+	_, err := svc.BuildDryPlan(domain.CreateInput{
+		Name: "nobase", BaseBranch: "main", ExecutionScope: root, RootSelector: "root-app",
+		PackageSelectors: []string{"core"}, NonInteractive: true,
+	})
+	var flutreeErr *domain.AppError
+	if !errors.As(err, &flutreeErr) || flutreeErr.Code != 2 {
+		t.Fatalf("expected an input error with code 2, got %v", err)
+	}
+	if flutreeErr.Message != "Base branch 'develop' does not exist in core." || flutreeErr.Hint != "Pass --package-base core=<branch>." {
+		t.Fatalf("unexpected message/hint: %q / %q", flutreeErr.Message, flutreeErr.Hint)
+	}
+}
+
+func TestApplyFailureDeletesOnlyBranchesCreatedInThisRun(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	rootRepo := filepath.Join(root, "root-app")
+	pkgA := filepath.Join(root, "pkg-a")
+	pkgB := filepath.Join(root, "pkg-b")
+	g := &fakeCreateGit{
+		repos: []domain.DiscoveredFlutterRepo{
+			{Name: "root-app", RepoRoot: rootRepo, PackageName: "root_app"},
+			{Name: "pkg-a", RepoRoot: pkgA, PackageName: "pkg_a"},
+			{Name: "pkg-b", RepoRoot: pkgB, PackageName: "pkg_b"},
+		},
+		branchExistsByID: map[string]bool{pkgA + "::feature/x": true}, // pre-existing: reused
+		failCreateAt:     filepath.Join("packages", "pkg-b"),
+	}
+	svc := NewCreateService(g, &fakeRegistry{}, &fakeCreatePrompt{})
+	plan, err := svc.BuildDryPlan(domain.CreateInput{
+		Name: "rollback-" + strings.ReplaceAll(filepath.Base(root), "_", "-"), Branch: "feature/x", BaseBranch: "main", ExecutionScope: root,
+		RootSelector: "root-app", PackageSelectors: []string{"pkg-a", "pkg-b"},
+		PackageBaseBranch: map[string]string{"pkg-a": "main", "pkg-b": "main"}, NonInteractive: true,
+	})
+	if err != nil {
+		t.Fatalf("build plan failed: %v", err)
+	}
+	if _, err := svc.Apply(plan, domain.CreateApplyOptions{NonInteractive: true, ReuseExistingBranch: true}); err == nil {
+		t.Fatalf("expected the apply to fail")
+	}
+	if len(g.deleted) != 1 || g.deleted[0] != rootRepo+"::feature/x" {
+		t.Fatalf("only the branch created in this run may be deleted, got %v", g.deleted)
+	}
+}
+
+func (f *fakeCreateGit) CurrentBranch(string) (string, error) { return "main", nil }
+func (f *fakeCreateGit) ListBranches(string) ([]string, []string, error) {
+	return []string{"main"}, []string{"origin/main"}, nil
+}
+
+func (f *fakeCreateGit) AheadBehind(string, string) (int, int, error) { return 0, 0, nil }

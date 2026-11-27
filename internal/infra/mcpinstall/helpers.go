@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/tidwall/jsonc"
 )
 
 // loadJSONMap reads a file as map[string]json.RawMessage.
@@ -31,6 +33,28 @@ func loadJSONMap(path string) (map[string]json.RawMessage, error) {
 		return nil, fmt.Errorf("malformed JSON in %s: %w", filepath.Base(path), err)
 	}
 	return m, nil
+}
+
+// loadJSONCMap is loadJSONMap for configs that may carry JSONC comments and
+// trailing commas. lossy reports that rewriting the file would drop them (the
+// bytes change when normalised to plain JSON); callers may read such a file
+// but must not rewrite it without an explicit --force.
+func loadJSONCMap(path string) (root map[string]json.RawMessage, lossy bool, err error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return map[string]json.RawMessage{}, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if len(data) == 0 {
+		return map[string]json.RawMessage{}, false, nil
+	}
+	plain := jsonc.ToJSONInPlace(append([]byte(nil), data...))
+	if err := json.Unmarshal(plain, &root); err != nil {
+		return nil, false, fmt.Errorf("malformed JSON in %s: %w", filepath.Base(path), err)
+	}
+	return root, string(plain) != string(data), nil
 }
 
 // getOrCreateRawMap returns the sub-map stored under key in root, creating an
@@ -105,4 +129,124 @@ func atomicWrite(path string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("rename temp file: %w", err)
 	}
 	return nil
+}
+
+// entryName is the key under which every client stores the flutree server.
+const entryName = "flutree"
+
+// jsonRemoveEntry deletes only root[key][flutree] from the JSON file at path,
+// preserving every other key and server. It returns OutcomeNotFound when the
+// file or entry does not exist, and never writes in that case.
+func jsonRemoveEntry(path, key string) (Outcome, error) {
+	return jsonRemoveEntryOpt(path, key, false)
+}
+
+// jsonRemoveEntryOpt is jsonRemoveEntry for configs that may be JSONC. When
+// the entry exists in a file with comments or trailing commas it refuses to
+// rewrite (that would drop them) and asks for a manual removal.
+func jsonRemoveEntryOpt(path, key string, allowJSONC bool) (Outcome, error) {
+	var (
+		root  map[string]json.RawMessage
+		lossy bool
+		err   error
+	)
+	if allowJSONC {
+		root, lossy, err = loadJSONCMap(path)
+	} else {
+		root, err = loadJSONMap(path)
+	}
+	if err != nil {
+		return OutcomeError, err
+	}
+	servers, err := getOrCreateRawMap(root, key)
+	if err != nil {
+		return OutcomeError, err
+	}
+	if _, ok := servers[entryName]; !ok {
+		return OutcomeNotFound, nil
+	}
+	if lossy {
+		return OutcomeError, fmt.Errorf("config contains JSONC comments or trailing commas; remove the %q entry from %s by hand", entryName, path)
+	}
+	delete(servers, entryName)
+	raw, err := json.Marshal(servers)
+	if err != nil {
+		return OutcomeError, err
+	}
+	root[key] = json.RawMessage(raw)
+	if err := writeJSONMap(path, root); err != nil {
+		return OutcomeError, err
+	}
+	return OutcomeRemoved, nil
+}
+
+// jsonLookupCommand returns the command of root[key][flutree] in the JSON file.
+func jsonLookupCommand(path, key string) (string, bool, error) {
+	return jsonLookupCommandOpt(path, key, false)
+}
+
+func jsonLookupCommandOpt(path, key string, allowJSONC bool) (string, bool, error) {
+	var (
+		root map[string]json.RawMessage
+		err  error
+	)
+	if allowJSONC {
+		root, _, err = loadJSONCMap(path)
+	} else {
+		root, err = loadJSONMap(path)
+	}
+	if err != nil {
+		return "", false, err
+	}
+	servers, err := getOrCreateRawMap(root, key)
+	if err != nil {
+		return "", false, err
+	}
+	raw, ok := servers[entryName]
+	if !ok {
+		return "", false, nil
+	}
+	return commandOf(raw), true, nil
+}
+
+// commandOf extracts the executable from a server entry whose "command" is
+// either a string or an array whose first element is the executable.
+func commandOf(raw json.RawMessage) string {
+	var e struct {
+		Command json.RawMessage `json:"command"`
+	}
+	if json.Unmarshal(raw, &e) != nil {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(e.Command, &s) == nil {
+		return s
+	}
+	var arr []string
+	if json.Unmarshal(e.Command, &arr) == nil && len(arr) > 0 {
+		return arr[0]
+	}
+	return ""
+}
+
+// homeOf resolves the home directory, honoring an injected base for tests.
+func homeOf(baseDir string) (string, error) {
+	if baseDir != "" {
+		return baseDir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("could not determine home directory: %w", err)
+	}
+	return home, nil
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func previewJSON(entry any) (string, error) {
+	data, err := json.MarshalIndent(map[string]any{entryName: entry}, "", "  ")
+	return string(data), err
 }
